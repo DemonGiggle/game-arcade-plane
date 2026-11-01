@@ -66,6 +66,18 @@ export const POWERUP = Object.freeze({
 export const POWER_DOUBLE_MS = POWERUP.doubleDurationMs;
 export const POWER_SHIELD_MS = POWERUP.shieldDurationMs;
 
+/** Bomb (ultimate) tuning: ENTER / right-click clears the screen. */
+export const BOMB = Object.freeze({
+  /** Bombs granted at run start. */
+  start: 2,
+  /** Max bombs held; level-clear refills +1 up to this cap. */
+  max: 3,
+  /** Damage dealt to the boss (regular enemies die outright). */
+  bossDamage: 20,
+  /** Minimum ms between bombs (also blocks held-ENTER key repeat). */
+  cooldownMs: 800,
+});
+
 /** Invulnerability windows in ms. */
 export const INVULN = Object.freeze({
   /** Brief grace after shield absorbs a hit. */
@@ -103,6 +115,7 @@ export const COLORS = Object.freeze({
   mute: '#8fa3c7',
   powerupDouble: '#ffe14d',
   powerupShield: '#35e0ff',
+  hudBomb: '#ffd166',
 });
 
 /** Canvas font family (monospace stack for arcade feel + readability). */
@@ -124,6 +137,7 @@ export const HUD_SIZES = Object.freeze({
   bossLabel: 12,
   powerupStatus: 12,
   powerupLabel: 11,
+  bomb: 13,
 });
 
 /** Scale factor applied when the larger-HUD option is on. */

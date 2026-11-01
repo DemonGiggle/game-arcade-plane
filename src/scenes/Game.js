@@ -16,6 +16,7 @@ import {
   PLAYER_BULLET_SPEED,
   TANK_BULLET_SPEED,
   BOSS_SCROLL_BONUS,
+  BOMB,
   POOL_SIZES,
   POWERUP,
   INVULN,
@@ -87,6 +88,8 @@ export default class Game extends Phaser.Scene {
     this.shieldUntil = 0;
     this.invulnUntil = 0;
     this.lastFired = 0;
+    this.bombs = BOMB.start;
+    this.lastBombAt = -BOMB.cooldownMs;
     this.elapsed = 0;
     this.spawnTimer = null;
     this.bossFireTimer = null;
@@ -212,11 +215,18 @@ export default class Game extends Phaser.Scene {
       this.input.keyboard.on('keydown-P', () => this.togglePause());
       this.input.keyboard.on('keydown-ESC', () => this.togglePause());
       this.input.keyboard.on('keydown-H', () => this.toggleLargeHud());
+      this.input.keyboard.on('keydown-ENTER', () => this.fireBomb());
       this.input.keyboard.on('keydown-M', () => {
         if (this.isPaused) return; // paused M = Menu (overlay handler below)
         this.toggleMuteUi();
       });
     }
+    // --- Bomb on right mouse button (touch uses left-button drag only,
+    // --- so there is no conflict with touch controls).
+    this._bombPointerHandler = (pointer) => {
+      if (pointer.rightButtonDown && pointer.rightButtonDown()) this.fireBomb();
+    };
+    this.input.on('pointerdown', this._bombPointerHandler, this);
     Sfx.installUnlock();
     Sfx.startMusic();
 
@@ -465,6 +475,11 @@ export default class Game extends Phaser.Scene {
       this.input.keyboard.off('keydown-M');
       this.input.keyboard.off('keydown-R');
       this.input.keyboard.off('keydown-H');
+      this.input.keyboard.off('keydown-ENTER');
+    }
+    if (this._bombPointerHandler) {
+      this.input.off('pointerdown', this._bombPointerHandler, this);
+      this._bombPointerHandler = null;
     }
     if (this.spawnTimer) {
       this.spawnTimer.remove(false);
@@ -604,6 +619,90 @@ export default class Game extends Phaser.Scene {
     }
   }
 
+  /**
+   * Ultimate bomb (ENTER / right-click): screen flash + expanding shockwave
+   * rings, wipes all regular enemies (kills count toward level progress),
+   * clears enemy bullets, and deals heavy damage to the boss (never a
+   * one-shot). Bombs are limited — an empty stock only shows a warning.
+   */
+  fireBomb() {
+    if (this.isPaused || this.gameOver) return;
+    const now = this.elapsed;
+    if (now - this.lastBombAt < BOMB.cooldownMs) return;
+    if (this.bombs <= 0) {
+      this.showBanner('NO BOMBS!');
+      Sfx.hit();
+      return;
+    }
+    this.lastBombAt = now;
+    this.bombs -= 1;
+
+    // --- Presentation: flash, shockwave rings, shake ---
+    Sfx.bomb();
+    if (!REDUCED_MOTION) {
+      this.cameras.main.flash(180, 255, 255, 255);
+      this.cameras.main.shake(250, 0.015);
+    }
+    for (let i = 0; i < 2; i++) {
+      const ring = this.add.circle(this.player.x, this.player.y, 24);
+      ring.setStrokeStyle(i === 0 ? 10 : 5, i === 0 ? 0xffffff : 0xffd166, 0.95);
+      ring.setDepth(DEPTHS.explosion);
+      ring.setAlpha(0.95);
+      const target = (Math.max(GAME_W, GAME_H) / 24) * (i === 0 ? 1 : 0.7);
+      this.tweens.add({
+        targets: ring,
+        scale: target,
+        alpha: 0,
+        duration: REDUCED_MOTION ? 250 : 550,
+        delay: i * 120,
+        ease: 'Cubic.easeOut',
+        onComplete: () => ring.destroy(),
+      });
+    }
+    announce('Bomb!');
+    this.updateHud();
+
+    // --- Wipe regular enemies (bomb kills count toward level progress) ---
+    const foes = this.enemies.getChildren();
+    for (let i = 0; i < foes.length; i++) {
+      const enemy = foes[i];
+      if (!enemy.active) continue;
+      const type = enemy.getData('type');
+      const stats = ENEMY_STATS[type] || { score: 100 };
+      this.score += stats.score;
+      this.kills += 1;
+      this.explode(enemy.x, enemy.y, type === 'tank');
+      this.maybeDropPowerup(enemy.x, enemy.y);
+      enemy.disableBody(true, false);
+      enemy.setActive(false).setVisible(false);
+    }
+
+    // --- Clear enemy bullets (classic bomb shelter) ---
+    const incoming = this.enemyBullets.getChildren();
+    for (let i = 0; i < incoming.length; i++) {
+      const b = incoming[i];
+      if (!b.active) continue;
+      this.boom.explode(3, b.x, b.y);
+      b.disableBody(true, true);
+      b.setActive(false).setVisible(false);
+    }
+
+    // --- Heavy damage to the boss (never a one-shot) ---
+    if (this.bossActive && this.boss && this.boss.active) {
+      this.bossHp -= BOMB.bossDamage;
+      this.boss.setTintFill(0xffffff);
+      this.time.delayedCall(120, () => {
+        if (this.boss && this.boss.active) this.boss.clearTint();
+      });
+      this.updateBossBar();
+      announceProgress(this);
+      if (this.bossHp <= 0) this.killBoss();
+    }
+
+    this.updateHud();
+    if (!this.gameOver) this.checkLevelProgress();
+  }
+
   /** Advance level or trigger the boss when the kill target is met. */
   checkLevelProgress() {
     const level = LEVELS[this.levelIndex];
@@ -612,6 +711,7 @@ export default class Game extends Phaser.Scene {
       if (this.levelIndex === 0) {
         this.levelIndex = 1;
         this.kills = 0;
+        this.bombs = Math.min(BOMB.max, this.bombs + 1);
         this.applyLevelConfig();
         Sfx.levelClear();
         track('level_clear', { level: 1, score: this.score });
@@ -619,6 +719,7 @@ export default class Game extends Phaser.Scene {
       } else if (this.levelIndex === 1) {
         this.levelIndex = 2;
         this.kills = 0;
+        this.bombs = Math.min(BOMB.max, this.bombs + 1);
         this.applyLevelConfig();
         track('level_clear', { level: 2, score: this.score });
         this.startBoss();

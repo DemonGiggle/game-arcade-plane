@@ -125,6 +125,13 @@ export function createHud(scene) {
     })
     .setOrigin(1, 0)
     .setDepth(DEPTHS.hud);
+  scene.bombText = scene.add
+    .text(GAME_W - 10, 30, '', {
+      ...font(HUD_SIZES.bomb),
+      color: COLORS.hudBomb,
+    })
+    .setOrigin(1, 0)
+    .setDepth(DEPTHS.hud);
   scene.progressText = scene.add
     .text(GAME_W / 2, 32, '', { ...font(HUD_SIZES.progress), color: COLORS.hudProgress })
     .setOrigin(0.5, 0)
@@ -216,6 +223,7 @@ export function applyHudScale(scene) {
   if (scene.highScoreText) scene.highScoreText.setFontSize(s(HUD_SIZES.highScore));
   scene.levelText.setFontSize(s(HUD_SIZES.level));
   scene.livesText.setFontSize(s(HUD_SIZES.lives));
+  if (scene.bombText) scene.bombText.setFontSize(s(HUD_SIZES.bomb));
   scene.progressText.setFontSize(s(HUD_SIZES.progress));
   scene.bannerText.setFontSize(s(HUD_SIZES.banner));
   scene.pauseText.setFontSize(s(HUD_SIZES.pause));
@@ -307,6 +315,9 @@ export function updateHud(scene) {
     scene.highScoreText.setText('HI ' + Math.max(scene.highScore || 0, scene.score));
   }
   scene.livesText.setText(formatLives(scene.lives));
+  if (scene.bombText) {
+    scene.bombText.setText(`BOMB x${Math.max(0, scene.bombs || 0)}`);
+  }
   scene.levelText.setText(LEVELS[scene.levelIndex].name);
   if (scene.bossActive) {
     scene.progressText.setText('DESTROY THE BOSS!');

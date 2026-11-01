@@ -67,8 +67,8 @@ export default class Menu extends Phaser.Scene {
     }
 
     const tutorial = seenTutorial
-      ? 'Move: Arrows / WASD\nShoot: SPACE (hold)\nPause: P   Mute: M   HUD size: H\n\nClear Level 1 + 2, then beat the BOSS.'
-      : 'Fly upward through the scrolling skies.\nThe world scrolls at a steady pace.\n\nMove: Arrows / WASD\nShoot: SPACE (hold)\nPause: P   Mute: M   HUD size: H\n\nClear Level 1 + 2, then beat the BOSS.';
+      ? 'Move: Arrows / WASD\nShoot: SPACE (hold)\nBomb: ENTER / Right-click\nPause: P   Mute: M   HUD size: H\n\nClear Level 1 + 2, then beat the BOSS.'
+      : 'Fly upward through the scrolling skies.\nThe world scrolls at a steady pace.\n\nMove: Arrows / WASD\nShoot: SPACE (hold)\nBomb: ENTER / Right-click\nPause: P   Mute: M   HUD size: H\n\nClear Level 1 + 2, then beat the BOSS.';
 
     this.add
       .text(width / 2, 400, tutorial, {

@@ -422,6 +422,11 @@ export const Sfx = {
     tone({ freq: 110, dur: 0.3, type: 'sawtooth', vol: 0.4 });
     tone({ freq: 110, dur: 0.3, type: 'sawtooth', vol: 0.4, delay: 0.35 });
   },
+  bomb() {
+    tone({ freq: 1200, end: 70, dur: 0.55, type: 'sawtooth', vol: 0.5 });
+    noiseBurst({ dur: 0.6, vol: 0.8, cutoff: 2500 });
+    tone({ freq: 65, end: 28, dur: 0.7, type: 'sine', vol: 0.5, delay: 0.05 });
+  },
   win() {
     [523, 659, 784, 1046].forEach((f, i) =>
       tone({ freq: f, dur: 0.16, type: 'square', vol: 0.3, delay: i * 0.14 })
