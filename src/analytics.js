@@ -118,7 +118,11 @@ export async function initErrorReporting() {
     const dsn = readEnv('VITE_SENTRY_DSN', '');
     if (!dsn) return false;
     if (typeof window === 'undefined') return false;
-    const mod = await import('@sentry/browser').catch(() => null);
+    // Optional peer, usually NOT installed: build the specifier dynamically so
+    // Vite/Rollup leave this as a runtime-only import (a static bare
+    // specifier would fail the dev transform / production build).
+    const spec = '@sentry/' + 'browser';
+    const mod = await import(/* @vite-ignore */ spec).catch(() => null);
     if (!mod || typeof mod.init !== 'function') return false;
     mod.init({ dsn });
     return true;
