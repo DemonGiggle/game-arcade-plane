@@ -91,19 +91,6 @@ export default class Menu extends Phaser.Scene {
       repeat: -1
     });
 
-    this.muteText = this.add
-      .text(width - 10, height - 24, Sfx.isMuted() ? 'MUTED (M)' : 'M: mute', {
-        fontFamily: 'Courier New',
-        fontSize: '12px',
-        color: '#8fa3c7'
-      })
-      .setOrigin(1, 0);
-
-    this.input.keyboard.on('keydown-M', () => {
-      const m = Sfx.toggleMute();
-      this.muteText.setText(m ? 'MUTED (M)' : 'M: mute');
-    });
-
     const start = () => {
       Sfx.unlock();
       track('start');
@@ -116,7 +103,45 @@ export default class Menu extends Phaser.Scene {
     };
     this.input.keyboard.once('keydown-ENTER', start);
     this.input.keyboard.once('keydown-SPACE', start);
-    this.input.once('pointerdown', start);
+
+    // Visible mute toggle (mirrors Game HUD). M always = mute.
+    this.muteText = this.add
+      .text(width - 10, height - 24, '', {
+        fontFamily: 'Courier New',
+        fontSize: '12px',
+        color: '#8fa3c7'
+      })
+      .setOrigin(1, 0)
+      .setInteractive({ useHandCursor: true });
+    const refreshMute = () => {
+      this.muteText.setText(Sfx.isMuted() ? '🔇 MUTED (M)' : '🔊 SOUND (M)');
+    };
+    refreshMute();
+    this.muteText.on('pointerdown', (ptr, x, y, event) => {
+      if (event) event.stopPropagation();
+      Sfx.unlock();
+      Sfx.toggleMute();
+      refreshMute();
+    });
+    this.input.keyboard.on('keydown-M', () => {
+      Sfx.unlock();
+      Sfx.toggleMute();
+      refreshMute();
+    });
+    // Click-to-start ignores clicks on the mute button (re-arm instead).
+    this.input.once('pointerdown', (ptr) => {
+      try {
+        const b = this.muteText.getBounds();
+        if (b && b.contains(ptr.x, ptr.y)) {
+          this.input.once('pointerdown', start);
+          return;
+        }
+      } catch {
+        // Bounds unavailable — fall through to start.
+      }
+      start();
+    });
+    Sfx.installUnlock();
   }
 
   update(time, delta) {
