@@ -13,6 +13,9 @@ const config = {
   height: 640,
   backgroundColor: '#071a3a',
   pixelArt: true,
+  // Keep Phaser's VisibilityHandler enabled so game.events emits
+  // 'hidden'/'blur' — Game scene uses them for auto-pause (issue #2).
+  disableVisibilityChange: false,
   physics: {
     default: 'arcade',
     arcade: {
