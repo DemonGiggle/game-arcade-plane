@@ -3,6 +3,8 @@
 // with pixelArt: true.
 
 function drawPixelMap(scene, key, map, palette, pixel = 4) {
+  // ISSUE-8: per-key guard so partial regens never duplicate an existing key.
+  if (scene.textures.exists(key)) return;
   const rows = map.length;
   const cols = map[0].length;
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
@@ -21,7 +23,24 @@ function drawPixelMap(scene, key, map, palette, pixel = 4) {
 }
 
 export function createAllTextures(scene) {
-  if (scene.textures.exists('player')) return;
+  // ISSUE-8 (P1 perf): guard on ALL keys, not just 'player', so re-entering
+  // Boot/Menu never regenerates the 256px ocean/clouds fill-rate-heavy layers.
+  const ALL_KEYS = [
+    'player',
+    'enemy1',
+    'enemy2',
+    'enemy3',
+    'boss',
+    'bullet',
+    'bullet2',
+    'enemyBullet',
+    'powerDouble',
+    'powerShield',
+    'spark',
+    'ocean',
+    'clouds'
+  ];
+  if (ALL_KEYS.every((k) => scene.textures.exists(k))) return;
 
   // --- Player plane (top-down jet, blue/white) ---
   drawPixelMap(
@@ -164,7 +183,8 @@ export function createAllTextures(scene) {
   );
 
   // --- Particle spark ---
-  {
+  // ISSUE-8: per-key guards so heavy layers are never needlessly redrawn.
+  if (!scene.textures.exists('spark')) {
     const g = scene.make.graphics({ x: 0, y: 0 }, false);
     g.fillStyle(0xffffff, 1);
     g.fillRect(0, 0, 8, 8);
@@ -173,7 +193,7 @@ export function createAllTextures(scene) {
   }
 
   // --- Tileable ocean background (256x256) ---
-  {
+  if (!scene.textures.exists('ocean')) {
     const S = 256;
     const g = scene.make.graphics({ x: 0, y: 0 }, false);
     g.fillStyle(0x0b3d91, 1);
@@ -198,7 +218,7 @@ export function createAllTextures(scene) {
   }
 
   // --- Transparent clouds layer (256x256, tileable-ish blobs) ---
-  {
+  if (!scene.textures.exists('clouds')) {
     const S = 256;
     const g = scene.make.graphics({ x: 0, y: 0 }, false);
     const blobs = [

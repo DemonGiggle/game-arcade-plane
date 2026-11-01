@@ -4,6 +4,8 @@ import { Sfx } from '../sfx.js';
 import { track } from '../analytics.js';
 import { load, update as persistUpdate } from '../persistence.js';
 import { attachTouchControls } from '../input/touch.js';
+// ISSUE-8 (P1 perf/a11y): shared flags only; keep #1 (touch) + #2 (pause/cleanup) wiring intact.
+import { REDUCED_MOTION, clampDeltaMs } from '../perf.js';
 
 const W = 480;
 const H = 640;
@@ -292,6 +294,12 @@ export default class Game extends Phaser.Scene {
   showBanner(msg) {
     this.bannerText.setText(msg);
     this.tweens.killTweensOf(this.bannerText);
+    // ISSUE-8: skip banner tween under reduced-motion (plain show/hide only).
+    if (REDUCED_MOTION) {
+      this.bannerText.setAlpha(1).setScale(1);
+      this.time.delayedCall(2200, () => this.bannerText.setAlpha(0));
+      return;
+    }
     this.bannerText.setAlpha(1).setScale(0.7);
     this.tweens.add({
       targets: this.bannerText,
@@ -613,8 +621,11 @@ export default class Game extends Phaser.Scene {
     this.lives -= 1;
     this.invulnUntil = now + 1500;
     Sfx.hit();
-    this.cameras.main.shake(220, 0.012);
-    this.cameras.main.flash(120, 255, 60, 60);
+    // ISSUE-8: no shake/flash under reduced-motion.
+    if (!REDUCED_MOTION) {
+      this.cameras.main.shake(220, 0.012);
+      this.cameras.main.flash(120, 255, 60, 60);
+    }
     this.explode(this.player.x, this.player.y, false);
     this.updateHud();
     if (this.lives <= 0) {
@@ -666,12 +677,17 @@ export default class Game extends Phaser.Scene {
     boss.setDepth(5);
     boss.setScale(1.4);
     this.boss = boss;
-    this.tweens.add({
-      targets: boss,
-      y: 130,
-      duration: 2000,
-      ease: 'Sine.easeOut'
-    });
+    // ISSUE-8: skip entrance tween under reduced-motion (place directly).
+    if (REDUCED_MOTION) {
+      boss.y = 130;
+    } else {
+      this.tweens.add({
+        targets: boss,
+        y: 130,
+        duration: 2000,
+        ease: 'Sine.easeOut'
+      });
+    }
     this.bossBarBg.setVisible(true);
     this.bossBar.setVisible(true);
     this.bossLabel.setText('BOSS').setVisible(true);
@@ -738,7 +754,8 @@ export default class Game extends Phaser.Scene {
     this.commitHighScore();
     track('boss_kill', { score: this.score });
     this.explode(this.boss.x, this.boss.y, true);
-    this.cameras.main.shake(400, 0.02);
+    // ISSUE-8: no shake under reduced-motion (keep #2 timer nulling).
+    if (!REDUCED_MOTION) this.cameras.main.shake(400, 0.02);
     if (this.bossFireTimer) {
       this.bossFireTimer.remove();
       this.bossFireTimer = null;
@@ -760,7 +777,8 @@ export default class Game extends Phaser.Scene {
     this.explode(this.player.x, this.player.y, true);
     this.player.setVisible(false);
     this.flame.stop();
-    this.cameras.main.shake(350, 0.02);
+    // ISSUE-8: no shake under reduced-motion.
+    if (!REDUCED_MOTION) this.cameras.main.shake(350, 0.02);
     this.time.delayedCall(1200, () => {
       this.scene.start('GameOver', { score: this.score, level: this.levelIndex + 1 });
     });
@@ -812,8 +830,9 @@ export default class Game extends Phaser.Scene {
 
   update(time, delta) {
     if (this.isPaused) return;
-    // Clamp delta to 50ms so tab-return spikes can't tunnel through colliders.
-    const clampedDelta = Math.min(delta, 50);
+    // ISSUE-8 (overlaps #2): clamp hitch/tab-return spikes to 50ms via shared
+    // helper so tunneling is prevented without per-frame alloc.
+    const clampedDelta = clampDeltaMs(delta);
     if (this.gameOver) {
       // Death / win cinematic: keep the background drifting, freeze combat.
       const dt0 = clampedDelta / 1000;
@@ -873,7 +892,10 @@ export default class Game extends Phaser.Scene {
     }
 
     // --- Enemies drift + patterns ---
-    for (const enemy of this.enemies.getChildren()) {
+    // ISSUE-8: indexed loop over cached array (no per-frame iterator alloc).
+    const foes = this.enemies.getChildren();
+    for (let i = 0; i < foes.length; i++) {
+      const enemy = foes[i];
       if (!enemy.active) continue;
       const type = enemy.getData('type');
       let t = (enemy.getData('t') || 0) + dt;
@@ -903,19 +925,26 @@ export default class Game extends Phaser.Scene {
     }
 
     // Cleanup offscreen bullets.
-    for (const b of this.playerBullets.getChildren()) {
+    // ISSUE-8: indexed loops over cached arrays (no per-frame iterator alloc).
+    const pBullets = this.playerBullets.getChildren();
+    for (let i = 0; i < pBullets.length; i++) {
+      const b = pBullets[i];
       if (b.active && b.y < -30) {
         b.disableBody(true, true);
         b.setActive(false).setVisible(false);
       }
     }
-    for (const b of this.enemyBullets.getChildren()) {
+    const eBullets = this.enemyBullets.getChildren();
+    for (let i = 0; i < eBullets.length; i++) {
+      const b = eBullets[i];
       if (b.active && (b.y > H + 30 || b.x < -30 || b.x > W + 30)) {
         b.disableBody(true, true);
         b.setActive(false).setVisible(false);
       }
     }
-    for (const p of this.powerups.getChildren()) {
+    const powers = this.powerups.getChildren();
+    for (let i = 0; i < powers.length; i++) {
+      const p = powers[i];
       if (p.active && p.y > H + 30) {
         p.disableBody(true, true);
         p.setActive(false).setVisible(false);

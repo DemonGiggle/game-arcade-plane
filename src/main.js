@@ -57,6 +57,16 @@ const config = {
   // Keep Phaser's VisibilityHandler enabled so game.events emits
   // 'hidden'/'blur' — Game scene uses them for auto-pause (issue #2).
   disableVisibilityChange: false,
+  // ISSUE-8 (P1 perf): cap step cost, smooth micro-hitches, cheaper canvas path.
+  fps: {
+    target: 60,
+    smoothStep: true
+  },
+  render: {
+    antialias: false,
+    roundPixels: true,
+    powerPreference: 'high-performance'
+  },
   physics: {
     default: 'arcade',
     arcade: {
