@@ -15,7 +15,6 @@ import {
   FIRE_DELAY,
   PLAYER_BULLET_SPEED,
   TANK_BULLET_SPEED,
-  BOOST_SPEED,
   BOSS_SCROLL_BONUS,
   POOL_SIZES,
   POWERUP,
@@ -111,9 +110,10 @@ export default class Game extends Phaser.Scene {
       this.highScore = this.highScore || 0;
     }
 
-    // --- Scrolling background: two parallax TileSprites ---
+    // --- Scrolling background: two parallax TileSprites, constant speed ---
     // tilePositionY is decreased every frame so the world appears to
-    // fly downward while the plane flies upward. Holding UP boosts speed.
+    // fly downward while the plane flies upward (same speed in all levels
+    // except a small boss-fight bonus; pressing UP never changes it).
     this.bg = this.add.tileSprite(0, 0, W, H, 'ocean').setOrigin(0, 0);
     this.clouds = this.add.tileSprite(0, 0, W, H, 'clouds').setOrigin(0, 0);
     this.bg.setTint(level.tint);
@@ -633,8 +633,11 @@ export default class Game extends Phaser.Scene {
     const level = LEVELS[this.levelIndex];
     this.bg.setTint(level.tint);
     if (!this.spawnTimer) return;
-    this.spawnTimer.delay = level.spawnDelay;
-    this.spawnTimer.reset({
+    // NOTE: Phaser TimerEvent has no reset(config) method — remove the old
+    // event and schedule a fresh one (a .reset() call here threw and broke
+    // level transitions, so the boss could never appear).
+    this.spawnTimer.remove(false);
+    this.spawnTimer = this.time.addEvent({
       delay: level.spawnDelay,
       loop: true,
       callback: () => this.spawnEnemy()
@@ -778,14 +781,12 @@ export default class Game extends Phaser.Scene {
     const now = this.elapsed;
     const level = LEVELS[this.levelIndex];
 
-    // --- Background scroll: always drifts (upward flight bias),
-    // --- and speeds up while the player pushes UP/W. ---
+    // --- Background scroll: constant speed; pressing UP/W only moves the
+    // --- plane, never the world. ---
     const hasKeyboard = !!(this.input && this.input.keyboard && this.cursors && this.keys);
-    const upPressed = hasKeyboard && (this.cursors.up.isDown || this.keys.W.isDown);
-    const boost = upPressed ? BOOST_SPEED : 0;
     const base = level.scrollSpeed + (this.bossActive ? BOSS_SCROLL_BONUS : 0);
-    this.bg.tilePositionY -= (base + boost) * dt;
-    this.clouds.tilePositionY -= (base * 1.6 + boost * 1.3) * dt;
+    this.bg.tilePositionY -= base * dt;
+    this.clouds.tilePositionY -= base * 1.6 * dt;
 
     // --- Player movement (keyboard + touch drag, see src/input/touch.js) ---
     let vx = 0;
