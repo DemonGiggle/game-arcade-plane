@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { load, update as persistUpdate } from '../persistence.js';
 
 export default class GameOver extends Phaser.Scene {
   constructor() {
@@ -8,6 +9,18 @@ export default class GameOver extends Phaser.Scene {
   init(data) {
     this.finalScore = data.score || 0;
     this.finalLevel = data.level || 1;
+    // Persist a new high-score (quota-guarded in persistence.js).
+    const saved = load();
+    this.highScore = saved.highScore || 0;
+    this.isNewBest = this.finalScore > this.highScore;
+    if (this.isNewBest) {
+      this.highScore = this.finalScore;
+      try {
+        persistUpdate({ highScore: this.highScore });
+      } catch {
+        // ignore persistence failure
+      }
+    }
   }
 
   create() {
@@ -23,16 +36,23 @@ export default class GameOver extends Phaser.Scene {
       })
       .setOrigin(0.5);
     this.add
-      .text(width / 2, 270, `SCORE  ${this.finalScore}\nREACHED LEVEL ${this.finalLevel}`, {
-        fontFamily: 'Courier New',
-        fontSize: '18px',
-        color: '#ffffff',
-        align: 'center',
-        lineSpacing: 8
-      })
+      .text(
+        width / 2,
+        270,
+        `SCORE  ${this.finalScore}\nHI-SCORE  ${this.highScore}` +
+          (this.isNewBest ? '\nNEW BEST!' : '') +
+          `\nREACHED LEVEL ${this.finalLevel}`,
+        {
+          fontFamily: 'Courier New',
+          fontSize: '18px',
+          color: '#ffffff',
+          align: 'center',
+          lineSpacing: 8
+        }
+      )
       .setOrigin(0.5);
     this.add
-      .text(width / 2, 380, 'Press R or ENTER to retry\nPress M for menu', {
+      .text(width / 2, 400, 'Press R or ENTER to retry\nPress M for menu', {
         fontFamily: 'Courier New',
         fontSize: '16px',
         color: '#8fd0ff',

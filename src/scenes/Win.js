@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { load, update as persistUpdate } from '../persistence.js';
 
 export default class Win extends Phaser.Scene {
   constructor() {
@@ -7,6 +8,18 @@ export default class Win extends Phaser.Scene {
 
   init(data) {
     this.finalScore = data.score || 0;
+    // Persist a new high-score (quota-guarded in persistence.js).
+    const saved = load();
+    this.highScore = saved.highScore || 0;
+    this.isNewBest = this.finalScore > this.highScore;
+    if (this.isNewBest) {
+      this.highScore = this.finalScore;
+      try {
+        persistUpdate({ highScore: this.highScore });
+      } catch {
+        // ignore persistence failure
+      }
+    }
   }
 
   create() {
@@ -15,7 +28,7 @@ export default class Win extends Phaser.Scene {
     this.add.tileSprite(0, 0, width, height, 'clouds').setOrigin(0, 0);
 
     this.add
-      .text(width / 2, 200, 'YOU WIN!', {
+      .text(width / 2, 180, 'YOU WIN!', {
         fontFamily: 'Courier New',
         fontSize: '48px',
         color: '#2eff7a',
@@ -23,18 +36,24 @@ export default class Win extends Phaser.Scene {
       })
       .setOrigin(0.5);
     this.add
-      .text(width / 2, 270, `BOSS DESTROYED!\nFINAL SCORE  ${this.finalScore}`, {
-        fontFamily: 'Courier New',
-        fontSize: '18px',
-        color: '#06281a',
-        align: 'center',
-        lineSpacing: 8,
-        backgroundColor: '#ffffffaa',
-        padding: { x: 16, y: 12 }
-      })
+      .text(
+        width / 2,
+        270,
+        `BOSS DESTROYED!\nFINAL SCORE  ${this.finalScore}\nHI-SCORE  ${this.highScore}` +
+          (this.isNewBest ? '\nNEW BEST!' : ''),
+        {
+          fontFamily: 'Courier New',
+          fontSize: '18px',
+          color: '#06281a',
+          align: 'center',
+          lineSpacing: 8,
+          backgroundColor: '#ffffffaa',
+          padding: { x: 16, y: 12 }
+        }
+      )
       .setOrigin(0.5);
     this.add
-      .text(width / 2, 400, 'Press R or ENTER to play again\nPress M for menu', {
+      .text(width / 2, 410, 'Press R or ENTER to play again\nPress M for menu', {
         fontFamily: 'Courier New',
         fontSize: '16px',
         color: '#06281a',
