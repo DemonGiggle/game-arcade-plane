@@ -8,6 +8,8 @@ const W = 480;
 const H = 640;
 const PLAYER_SPEED = 320;
 const FIRE_DELAY = 180;
+const POWER_DOUBLE_MS = 10000;
+const POWER_SHIELD_MS = 9000;
 
 export default class Game extends Phaser.Scene {
   constructor() {
@@ -142,12 +144,17 @@ export default class Game extends Phaser.Scene {
     );
 
     // --- Input (guarded: keyboard plugin may be absent) ---
+    // Keep main's guard + auto-pause/mute wiring; add issue-6 ESC pause
+    // and paused-M = Menu (mute suppressed while paused).
     if (this.input.keyboard) {
       this.cursors = this.input.keyboard.createCursorKeys();
       this.keys = this.input.keyboard.addKeys('W,A,S,D,P,M,SPACE');
       this.input.keyboard.on('keydown-P', () => this.togglePause());
-      // M always toggles mute (GameOver/Win use ESC for menu).
-      this.input.keyboard.on('keydown-M', () => this.toggleMuteUi());
+      this.input.keyboard.on('keydown-ESC', () => this.togglePause());
+      this.input.keyboard.on('keydown-M', () => {
+        if (this.isPaused) return; // paused M = Menu (overlay handler below)
+        this.toggleMuteUi();
+      });
     }
     Sfx.installUnlock();
     Sfx.startMusic();
@@ -232,6 +239,23 @@ export default class Game extends Phaser.Scene {
       .setDepth(30)
       .setVisible(false);
 
+    // --- Power-up timers HUD (top-left, below score; hidden when inactive) ---
+    this.doubleLabel = this.add
+      .text(10, 82, '', { fontFamily: 'Courier New', fontSize: '12px', color: '#ffe14d' })
+      .setDepth(30)
+      .setVisible(false);
+    this.doubleBarBg = this.add.rectangle(10, 98, 112, 8, 0x222233, 0.9).setOrigin(0, 0.5).setDepth(30).setVisible(false);
+    this.doubleBar = this.add.rectangle(11, 98, 110, 5, 0xffe14d).setOrigin(0, 0.5).setDepth(31).setVisible(false);
+    this.shieldLabel = this.add
+      .text(10, 108, '', { fontFamily: 'Courier New', fontSize: '12px', color: '#35e0ff' })
+      .setDepth(30)
+      .setVisible(false);
+    this.shieldBarBg = this.add.rectangle(10, 124, 112, 8, 0x222233, 0.9).setOrigin(0, 0.5).setDepth(30).setVisible(false);
+    this.shieldBar = this.add.rectangle(11, 124, 110, 5, 0x35e0ff).setOrigin(0, 0.5).setDepth(31).setVisible(false);
+
+    // --- Pause overlay (dim + resume/restart/menu buttons) ---
+    this.createPauseOverlay();
+
     this.showBanner(LEVELS[0].name + '\nShoot everything!');
     this.updateHud();
 
@@ -286,13 +310,26 @@ export default class Game extends Phaser.Scene {
       const target = LEVELS[this.levelIndex].killsToClear;
       this.progressText.setText(`KILLS ${this.kills}/${target}`);
     }
+    if (this.doubleLabel) this.updatePowerupHud(this.elapsed);
   }
 
-  togglePause() {
+  togglePause(force) {
     if (this.gameOver) return;
-    this.isPaused = !this.isPaused;
-    this.pauseText.setVisible(this.isPaused);
-    if (this.isPaused) {
+    const next = typeof force === 'boolean' ? force : !this.isPaused;
+    if (next === this.isPaused) return;
+    this.setPaused(next);
+  }
+
+  setPaused(paused) {
+    if (this.gameOver) return;
+    if (this.isPaused === paused && this.pauseOverlay && this.pauseOverlay.visible === paused) return;
+    this.isPaused = paused;
+    // Legacy pauseText object is kept (issue #2 auto-pause builds on it)
+    // but hidden: the overlay is the visible pause UI, and showing both
+    // would overlap the RESUME button / ghost through the dim.
+    if (this.pauseText) this.pauseText.setVisible(false);
+    if (this.pauseOverlay) this.pauseOverlay.setVisible(paused);
+    if (paused) {
       this.physics.world.pause();
       if (this.spawnTimer) this.spawnTimer.paused = true;
       if (this.bossFireTimer) this.bossFireTimer.paused = true;
@@ -300,6 +337,118 @@ export default class Game extends Phaser.Scene {
       this.physics.world.resume();
       if (this.spawnTimer) this.spawnTimer.paused = false;
       if (this.bossFireTimer) this.bossFireTimer.paused = false;
+    }
+  }
+
+  createPauseOverlay() {
+    const overlay = this.add.container(0, 0).setDepth(60).setVisible(false);
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.65).setOrigin(0, 0);
+    const title = this.add
+      .text(W / 2, H / 2 - 110, 'PAUSED', {
+        fontFamily: 'Courier New',
+        fontSize: '36px',
+        color: '#ffffff',
+        fontStyle: 'bold'
+      })
+      .setOrigin(0.5);
+    const hint = this.add
+      .text(W / 2, H / 2 - 76, 'P / ESC to resume', {
+        fontFamily: 'Courier New',
+        fontSize: '14px',
+        color: '#8fd0ff'
+      })
+      .setOrigin(0.5);
+    overlay.add([dim, title, hint]);
+    this.pauseButtons = [];
+    const defs = [
+      { label: 'RESUME (P)', cb: () => this.resumeGame() },
+      { label: 'RESTART (R)', cb: () => this.restartGame() },
+      { label: 'MENU (M)', cb: () => this.quitToMenu() }
+    ];
+    defs.forEach((d, i) => {
+      const y = H / 2 - 10 + i * 56;
+      const btn = this.makePauseButton(W / 2, y, d.label, d.cb);
+      overlay.add([btn.bg, btn.label]);
+      this.pauseButtons.push(btn);
+    });
+    // Keyboard shortcuts while paused (P/ESC handled globally).
+    // Guarded: keyboard plugin may be absent (boot fallback tests).
+    if (this.input.keyboard) {
+      this.input.keyboard.on('keydown-R', () => {
+        if (this.isPaused) this.restartGame();
+      });
+      this.input.keyboard.on('keydown-M', () => {
+        if (this.isPaused) this.quitToMenu();
+      });
+    }
+    this.pauseOverlay = overlay;
+  }
+
+  makePauseButton(x, y, label, cb) {
+    const bg = this.add.rectangle(x, y, 230, 42, 0x182a4a, 0.95).setStrokeStyle(2, 0x8fd0ff);
+    const txt = this.add
+      .text(x, y, label, {
+        fontFamily: 'Courier New',
+        fontSize: '18px',
+        color: '#ffffff'
+      })
+      .setOrigin(0.5);
+    bg.setInteractive({ useHandCursor: true });
+    bg.on('pointerover', () => bg.setFillStyle(0x2a4a7a, 1));
+    bg.on('pointerout', () => bg.setFillStyle(0x182a4a, 0.95));
+    bg.on('pointerdown', () => cb());
+    return { bg, label: txt };
+  }
+
+  resumeGame() {
+    this.setPaused(false);
+  }
+
+  restartGame() {
+    // Unpause before restart so the fresh scene starts running.
+    this.isPaused = false;
+    if (this.pauseText) this.pauseText.setVisible(false);
+    if (this.pauseOverlay) this.pauseOverlay.setVisible(false);
+    this.physics.world.resume();
+    if (this.spawnTimer) this.spawnTimer.paused = false;
+    if (this.bossFireTimer) this.bossFireTimer.paused = false;
+    this.scene.restart();
+  }
+
+  quitToMenu() {
+    this.isPaused = false;
+    if (this.pauseText) this.pauseText.setVisible(false);
+    if (this.pauseOverlay) this.pauseOverlay.setVisible(false);
+    this.physics.world.resume();
+    if (this.spawnTimer) this.spawnTimer.paused = false;
+    if (this.bossFireTimer) this.bossFireTimer.paused = false;
+    this.scene.start('Menu');
+  }
+
+  updatePowerupHud(now) {
+    if (!this.doubleLabel || !this.shieldLabel) return;
+    const t = typeof now === 'number' ? now : this.elapsed;
+    const dRemain = this.doubleShotUntil - t;
+    if (dRemain > 0) {
+      const frac = Phaser.Math.Clamp(dRemain / POWER_DOUBLE_MS, 0, 1);
+      this.doubleLabel.setText(`2X ${(dRemain / 1000).toFixed(1)}s`).setVisible(true);
+      this.doubleBarBg.setVisible(true);
+      this.doubleBar.setVisible(true).setScale(frac, 1);
+    } else {
+      this.doubleLabel.setVisible(false);
+      this.doubleBarBg.setVisible(false);
+      this.doubleBar.setVisible(false);
+    }
+    const sRemain = this.shieldUntil - t;
+    if (sRemain > 0) {
+      const frac = Phaser.Math.Clamp(sRemain / POWER_SHIELD_MS, 0, 1);
+      this.shieldLabel.setText(`SHIELD ${(sRemain / 1000).toFixed(1)}s`).setVisible(true);
+      this.shieldBarBg.setVisible(true);
+      this.shieldBar.setVisible(true).setScale(frac, 1);
+    } else {
+      this.shieldLabel.setVisible(false);
+      this.shieldBarBg.setVisible(false);
+      this.shieldBar.setVisible(false);
     }
   }
 
@@ -332,7 +481,9 @@ export default class Game extends Phaser.Scene {
     }
     if (this.input && this.input.keyboard) {
       this.input.keyboard.off('keydown-P');
+      this.input.keyboard.off('keydown-ESC');
       this.input.keyboard.off('keydown-M');
+      this.input.keyboard.off('keydown-R');
     }
     if (this.spawnTimer) {
       this.spawnTimer.remove(false);
@@ -451,6 +602,7 @@ export default class Game extends Phaser.Scene {
       this.invulnUntil = now + 1000;
       Sfx.hit();
       this.showBanner('SHIELD DOWN!');
+      this.updateHud();
       return;
     }
     this.lives -= 1;
@@ -640,11 +792,11 @@ export default class Game extends Phaser.Scene {
     power.setActive(false).setVisible(false);
     Sfx.powerup();
     if (kind === 'double') {
-      this.doubleShotUntil = this.elapsed + 10000;
+      this.doubleShotUntil = this.elapsed + POWER_DOUBLE_MS;
       this.showBanner('DOUBLE SHOT!');
       this.score += 50;
     } else {
-      this.shieldUntil = this.elapsed + 9000;
+      this.shieldUntil = this.elapsed + POWER_SHIELD_MS;
       this.showBanner('SHIELD!');
       this.score += 50;
     }
@@ -699,6 +851,7 @@ export default class Game extends Phaser.Scene {
       this.shieldRing.setPosition(this.player.x, this.player.y);
       this.shieldRing.setAlpha(0.6 + Math.sin(now / 150) * 0.3);
     }
+    this.updatePowerupHud(now);
 
     // Invulnerability blink.
     if (now < this.invulnUntil) {

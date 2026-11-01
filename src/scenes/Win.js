@@ -53,15 +53,23 @@ export default class Win extends Phaser.Scene {
         }
       )
       .setOrigin(0.5);
+    // Hint keeps main's keymap: R/ENTER replay, ESC menu, M mute.
     this.add
-      .text(width / 2, 400, 'Press R or ENTER to play again\nPress ESC for menu   M: mute', {
+      .text(width / 2, 375, 'R / ENTER play again  •  ESC menu  •  M mute', {
         fontFamily: 'Courier New',
-        fontSize: '16px',
+        fontSize: '13px',
         color: '#06281a',
         align: 'center',
-        lineSpacing: 6
+        backgroundColor: '#ffffffaa',
+        padding: { x: 8, y: 4 }
       })
       .setOrigin(0.5);
+
+    // Issue-6: proper buttons with generous hit-areas (touch + mouse).
+    // No catch-all pointerdown: background taps must NOT restart the game,
+    // so Menu stays reachable on touch. Navigation only via buttons + keys.
+    this.makeButton(width / 2, 425, 'PLAY AGAIN  (R / ENTER)', () => this.scene.start('Game'), '#ffffff', 0x0f5132);
+    this.makeButton(width / 2, 485, 'MENU  (ESC)', () => this.scene.start('Menu'), '#06281a', 0xffffff);
 
     // M is reserved for mute everywhere (fixes Game mute vs menu conflict).
     this.muteText = this.add
@@ -94,19 +102,27 @@ export default class Win extends Phaser.Scene {
     this.input.keyboard.once('keydown-R', again);
     this.input.keyboard.once('keydown-ENTER', again);
     this.input.keyboard.once('keydown-ESC', () => this.scene.start('Menu'));
-    // Click (outside the mute button) replays; mute clicks re-arm.
-    this.input.once('pointerdown', (ptr) => {
-      try {
-        const b = this.muteText.getBounds();
-        if (b && b.contains(ptr.x, ptr.y)) {
-          this.input.once('pointerdown', again);
-          return;
-        }
-      } catch {
-        // Bounds unavailable — fall through to replay.
-      }
-      again();
-    });
     Sfx.installUnlock();
+  }
+
+  makeButton(x, y, label, cb, color, bgColor) {
+    const bg = this.add
+      .rectangle(x, y, 280, 44, bgColor)
+      .setStrokeStyle(2, 0x06281a)
+      .setInteractive({ useHandCursor: true });
+    const txt = this.add
+      .text(x, y, label, {
+        fontFamily: 'Courier New',
+        fontSize: '16px',
+        color
+      })
+      .setOrigin(0.5);
+    bg.on('pointerover', () => bg.setFillStyle(0x2a4a7a));
+    bg.on('pointerout', () => bg.setFillStyle(bgColor));
+    bg.on('pointerdown', () => cb());
+    // Make the label itself clickable too for a forgiving hit-area.
+    txt.setInteractive({ useHandCursor: true });
+    txt.on('pointerdown', () => cb());
+    return { bg, txt };
   }
 }
