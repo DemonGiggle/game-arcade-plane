@@ -3,6 +3,7 @@ import { LEVELS, ENEMY_STATS, BOSS } from '../levels.js';
 import { Sfx } from '../sfx.js';
 import { track } from '../analytics.js';
 import { load, update as persistUpdate } from '../persistence.js';
+import { attachTouchControls } from '../input/touch.js';
 
 const W = 480;
 const H = 640;
@@ -35,6 +36,7 @@ export default class Game extends Phaser.Scene {
     this.spawnTimer = null;
     this.bossFireTimer = null;
     this.colliders = [];
+    this.touch = null; // touch controls (issue #1), attached in create()
   }
 
   create() {
@@ -158,6 +160,9 @@ export default class Game extends Phaser.Scene {
     }
     Sfx.installUnlock();
     Sfx.startMusic();
+
+    // --- Touch controls (issue #1, P0): drag-to-move + autofire + buttons ---
+    this.touch = attachTouchControls(this);
 
     // --- HUD ---
     this.scoreText = this.add
@@ -831,7 +836,7 @@ export default class Game extends Phaser.Scene {
     this.bg.tilePositionY -= (base + boost) * dt;
     this.clouds.tilePositionY -= (base * 1.6 + boost * 1.3) * dt;
 
-    // --- Player movement (keyboard only) ---
+    // --- Player movement (keyboard + touch drag, see src/input/touch.js) ---
     let vx = 0;
     let vy = 0;
     if (hasKeyboard) {
@@ -843,6 +848,8 @@ export default class Game extends Phaser.Scene {
     this.player.setVelocity(vx * PLAYER_SPEED, vy * PLAYER_SPEED);
     // Bank/tilt when strafing.
     this.player.setAngle(Phaser.Math.Linear(this.player.angle, vx * 12, 0.25));
+    // Touch drag overrides keyboard velocity while a gameplay touch is held.
+    if (this.touch) this.touch.applyMovement(this.player, PLAYER_SPEED);
 
     // Shield ring follows player.
     const shielded = now < this.shieldUntil;
@@ -860,8 +867,8 @@ export default class Game extends Phaser.Scene {
       this.player.setAlpha(1);
     }
 
-    // --- Shooting (Space, hold to autofire) ---
-    if (hasKeyboard && (this.cursors.space.isDown || this.keys.SPACE.isDown)) {
+    // --- Shooting (Space, hold to autofire; touch autofires while touching) ---
+    if ((hasKeyboard && (this.cursors.space.isDown || this.keys.SPACE.isDown)) || (this.touch && this.touch.isFiring())) {
       this.firePlayer(now);
     }
 

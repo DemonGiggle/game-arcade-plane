@@ -66,7 +66,10 @@ const config = {
   },
   scale: {
     mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    autoRound: true,
+    fullscreenTarget: 'game',
+    disableContextMenu: true
   },
   scene: [Boot, Menu, Game, GameOver, Win]
 };
