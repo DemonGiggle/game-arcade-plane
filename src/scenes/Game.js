@@ -146,11 +146,11 @@ export default class Game extends Phaser.Scene {
       this.cursors = this.input.keyboard.createCursorKeys();
       this.keys = this.input.keyboard.addKeys('W,A,S,D,P,M,SPACE');
       this.input.keyboard.on('keydown-P', () => this.togglePause());
-      this.input.keyboard.on('keydown-M', () => {
-        const m = Sfx.toggleMute();
-        this.muteText.setText(m ? 'MUTED (M)' : '');
-      });
+      // M always toggles mute (GameOver/Win use ESC for menu).
+      this.input.keyboard.on('keydown-M', () => this.toggleMuteUi());
     }
+    Sfx.installUnlock();
+    Sfx.startMusic();
 
     // --- HUD ---
     this.scoreText = this.add
@@ -218,7 +218,10 @@ export default class Game extends Phaser.Scene {
         color: '#8fa3c7'
       })
       .setOrigin(1, 0)
-      .setDepth(30);
+      .setDepth(30)
+      .setInteractive({ useHandCursor: true });
+    this.muteText.on('pointerdown', () => this.toggleMuteUi());
+    this.refreshMuteUi();
 
     // Boss HP bar
     this.bossBarBg = this.add.rectangle(W / 2, 56, 400, 14, 0x330a12).setDepth(30).setVisible(false);
@@ -304,7 +307,19 @@ export default class Game extends Phaser.Scene {
     if (!this.isPaused && !this.gameOver) this.togglePause();
   }
 
+  toggleMuteUi() {
+    Sfx.unlock();
+    Sfx.toggleMute();
+    this.refreshMuteUi();
+  }
+
+  refreshMuteUi() {
+    if (!this.muteText) return;
+    this.muteText.setText(Sfx.isMuted() ? '🔇 MUTED (M)' : '🔊 SOUND (M)');
+  }
+
   handleShutdown() {
+    Sfx.stopMusic();
     if (this.game && this.game.events) {
       this.game.events.off('hidden', this._autoPauseHandler, this);
       this.game.events.off('blur', this._autoPauseHandler, this);
