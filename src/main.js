@@ -4,6 +4,7 @@ import Menu from './scenes/Menu.js';
 import Game from './scenes/Game.js';
 import GameOver from './scenes/GameOver.js';
 import Win from './scenes/Win.js';
+import { createPhaserConfig } from './config.js';
 import './style.css';
 
 function hideLoading() {
@@ -47,48 +48,17 @@ Boot.prototype.create = function () {
   return bootCreate.apply(this, arguments);
 };
 
-const config = {
-  type: Phaser.AUTO,
-  parent: 'game',
-  width: 480,
-  height: 640,
-  backgroundColor: '#071a3a',
-  pixelArt: true,
-  // Keep Phaser's VisibilityHandler enabled so game.events emits
-  // 'hidden'/'blur' — Game scene uses them for auto-pause (issue #2).
-  disableVisibilityChange: false,
-  // ISSUE-8 (P1 perf): cap step cost, smooth micro-hitches, cheaper canvas path.
-  fps: {
-    target: 60,
-    smoothStep: true
-  },
-  render: {
-    antialias: false,
-    roundPixels: true,
-    powerPreference: 'high-performance'
-  },
-  physics: {
-    default: 'arcade',
-    arcade: {
-      gravity: { y: 0 },
-      debug: false
-    }
-  },
-  scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
-    autoRound: true,
-    fullscreenTarget: 'game',
-    disableContextMenu: true
-  },
-  scene: [Boot, Menu, Game, GameOver, Win]
-};
+// Phaser boot config lives in src/config.js (issue #11 extraction); the
+// values below preserve main's perf/scale/visibility tuning (issues #1/#2/#8).
+const config = createPhaserConfig([Boot, Menu, Game, GameOver, Win]);
 
+let game = null;
 try {
-  // eslint-disable-next-line no-new
-  new Phaser.Game(config);
+  game = new Phaser.Game(config);
 } catch (err) {
   console.error(err);
   var message = err instanceof Error ? err.message : String(err);
   showFallback('Boot failed: ' + message);
 }
+
+export default game;
