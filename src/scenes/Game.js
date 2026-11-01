@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { LEVELS, ENEMY_STATS, BOSS } from '../levels.js';
 import { Sfx } from '../sfx.js';
 import { track } from '../analytics.js';
+import { load, update as persistUpdate } from '../persistence.js';
 
 const W = 480;
 const H = 640;
@@ -15,6 +16,7 @@ export default class Game extends Phaser.Scene {
 
   init() {
     this.score = 0;
+    this.highScore = 0;
     this.lives = 3;
     this.levelIndex = 0;
     this.kills = 0;
@@ -37,6 +39,15 @@ export default class Game extends Phaser.Scene {
     this.attempt = (Game.attempts = (Game.attempts || 0) + 1);
     if (this.attempt > 1) track('retry', { attempt: this.attempt });
     const level = LEVELS[this.levelIndex];
+
+    // Restore persisted prefs: high-score for HUD, muted for audio.
+    try {
+      const saved = load();
+      this.highScore = saved.highScore || 0;
+      Sfx.setMuted(saved.muted === true);
+    } catch {
+      this.highScore = this.highScore || 0;
+    }
 
     // --- Scrolling background: two parallax TileSprites ---
     // tilePositionY is decreased every frame so the world appears to
@@ -149,6 +160,13 @@ export default class Game extends Phaser.Scene {
         color: '#ffffff'
       })
       .setDepth(30);
+    this.highScoreText = this.add
+      .text(10, 30, 'HI 0', {
+        fontFamily: 'Courier New',
+        fontSize: '13px',
+        color: '#ffe14d'
+      })
+      .setDepth(30);
     this.levelText = this.add
       .text(W / 2, 8, LEVELS[0].name, {
         fontFamily: 'Courier New',
@@ -194,7 +212,7 @@ export default class Game extends Phaser.Scene {
       .setDepth(50)
       .setVisible(false);
     this.muteText = this.add
-      .text(W - 10, H - 24, '', {
+      .text(W - 10, H - 24, Sfx.isMuted() ? 'MUTED (M)' : '', {
         fontFamily: 'Courier New',
         fontSize: '12px',
         color: '#8fa3c7'
@@ -254,6 +272,9 @@ export default class Game extends Phaser.Scene {
 
   updateHud() {
     this.scoreText.setText('SCORE ' + this.score);
+    if (this.highScoreText) {
+      this.highScoreText.setText('HI ' + Math.max(this.highScore || 0, this.score));
+    }
     this.livesText.setText('♥'.repeat(Math.max(0, this.lives)) || '—');
     this.levelText.setText(LEVELS[this.levelIndex].name);
     if (this.bossActive) {
@@ -528,8 +549,21 @@ export default class Game extends Phaser.Scene {
     Sfx.enemyShoot();
   }
 
+  commitHighScore() {
+    try {
+      if (this.score > (this.highScore || 0)) {
+        this.highScore = this.score;
+        persistUpdate({ highScore: this.highScore });
+      }
+    } catch {
+      // quota guard lives in persistence.js
+    }
+    this.updateHud();
+  }
+
   killBoss() {
     this.score += BOSS.score;
+    this.commitHighScore();
     track('boss_kill', { score: this.score });
     this.explode(this.boss.x, this.boss.y, true);
     this.cameras.main.shake(400, 0.02);
@@ -549,6 +583,7 @@ export default class Game extends Phaser.Scene {
 
   doGameOver() {
     this.gameOver = true;
+    this.commitHighScore();
     track('game_over', { score: this.score, level: this.levelIndex + 1 });
     this.explode(this.player.x, this.player.y, true);
     this.player.setVisible(false);

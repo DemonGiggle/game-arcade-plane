@@ -1,9 +1,15 @@
 // Tiny WebAudio synth for laser / explosion / pickup bleeps.
 // No audio files needed. Unlocks on first user gesture.
+import { load, update as persistUpdate } from './persistence.js';
 
 let ctx = null;
 let master = null;
 let muted = false;
+try {
+  muted = load().muted === true;
+} catch {
+  muted = false;
+}
 
 function ensureCtx() {
   try {
@@ -22,7 +28,7 @@ function ensureCtx() {
     ctx = next;
     try {
       master = ctx.createGain();
-      master.gain.value = 0.35;
+      master.gain.value = muted ? 0 : 0.35;
       master.connect(ctx.destination);
     } catch (e2) {
       try {
@@ -47,6 +53,22 @@ export function unlockAudio() {
 export function toggleMute() {
   muted = !muted;
   if (master) master.gain.value = muted ? 0 : 0.35;
+  try {
+    persistUpdate({ muted });
+  } catch {
+    // persistence already quota-guarded; never break audio toggle
+  }
+  return muted;
+}
+
+export function setMuted(value) {
+  muted = value === true;
+  if (master) master.gain.value = muted ? 0 : 0.35;
+  try {
+    persistUpdate({ muted });
+  } catch {
+    // ignore persistence failure
+  }
   return muted;
 }
 
@@ -100,6 +122,8 @@ function noiseBurst({ dur = 0.3, vol = 0.6, delay = 0, cutoff = 1200 }) {
 export const Sfx = {
   unlock: unlockAudio,
   toggleMute,
+  setMuted,
+  isMuted,
   laser() {
     tone({ freq: 880, end: 220, dur: 0.12, type: 'square', vol: 0.25 });
   },
