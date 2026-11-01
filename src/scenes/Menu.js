@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { Sfx } from '../sfx.js';
+import { track } from '../analytics.js';
 
 export default class Menu extends Phaser.Scene {
   constructor() {
@@ -71,6 +72,7 @@ export default class Menu extends Phaser.Scene {
 
     const start = () => {
       Sfx.unlock();
+      track('start');
       this.scene.start('Game');
     };
     this.input.keyboard.once('keydown-ENTER', start);

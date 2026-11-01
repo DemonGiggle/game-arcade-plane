@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { LEVELS, ENEMY_STATS, BOSS } from '../levels.js';
 import { Sfx } from '../sfx.js';
+import { track } from '../analytics.js';
 
 const W = 480;
 const H = 640;
@@ -30,6 +31,8 @@ export default class Game extends Phaser.Scene {
   }
 
   create() {
+    this.attempt = (Game.attempts = (Game.attempts || 0) + 1);
+    if (this.attempt > 1) track('retry', { attempt: this.attempt });
     const level = LEVELS[this.levelIndex];
 
     // --- Scrolling background: two parallax TileSprites ---
@@ -368,11 +371,13 @@ export default class Game extends Phaser.Scene {
         this.kills = 0;
         this.applyLevelConfig();
         Sfx.levelClear();
+        track('level_clear', { level: 1, score: this.score });
         this.showBanner('LEVEL 2\nFaster!');
       } else if (this.levelIndex === 1) {
         this.levelIndex = 2;
         this.kills = 0;
         this.applyLevelConfig();
+        track('level_clear', { level: 2, score: this.score });
         this.startBoss();
       }
       this.updateHud();
@@ -453,6 +458,7 @@ export default class Game extends Phaser.Scene {
 
   killBoss() {
     this.score += BOSS.score;
+    track('boss_kill', { score: this.score });
     this.explode(this.boss.x, this.boss.y, true);
     this.cameras.main.shake(400, 0.02);
     if (this.bossFireTimer) this.bossFireTimer.remove();
@@ -468,6 +474,7 @@ export default class Game extends Phaser.Scene {
 
   doGameOver() {
     this.gameOver = true;
+    track('game_over', { score: this.score, level: this.levelIndex + 1 });
     this.explode(this.player.x, this.player.y, true);
     this.player.setVisible(false);
     this.flame.stop();
