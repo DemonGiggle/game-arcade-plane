@@ -61,9 +61,12 @@ export function startBoss(scene) {
     callback: () => bossShoot(scene),
   });
   // Collide player bullets with the boss body directly.
+  // NOTE: for group-vs-sprite overlaps Phaser passes (sprite, groupChild),
+  // so the boss comes first and the bullet second. Using (b) alone here
+  // used to disable/invisibilize the BOSS on first contact (boss never seen).
   scene.colliders.push(
-    scene.physics.add.overlap(scene.playerBullets, boss, (b) => {
-      if (!b.active || scene.gameOver) return;
+    scene.physics.add.overlap(scene.playerBullets, boss, (_bossSprite, b) => {
+      if (!b || !b.active || scene.gameOver) return;
       b.disableBody(true, true);
       b.setActive(false).setVisible(false);
       scene.bossHp -= 1;
