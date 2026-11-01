@@ -1,24 +1,78 @@
 import Phaser from 'phaser';
-import { LEVELS, ENEMY_STATS, BOSS } from '../levels.js';
+import { LEVELS, ENEMY_STATS } from '../levels.js';
 import { Sfx } from '../sfx.js';
 import { track } from '../analytics.js';
 import { load, update as persistUpdate } from '../persistence.js';
 import { attachTouchControls } from '../input/touch.js';
 // ISSUE-8 (P1 perf/a11y): shared flags only; keep #1 (touch) + #2 (pause/cleanup) wiring intact.
 import { REDUCED_MOTION, clampDeltaMs } from '../perf.js';
+// ISSUE-11 (P2 refactor+a11y): constants + extracted systems. Game keeps the
+// same public method names as thin wrappers so other waves still apply.
+import {
+  GAME_W,
+  GAME_H,
+  PLAYER_SPEED,
+  FIRE_DELAY,
+  PLAYER_BULLET_SPEED,
+  TANK_BULLET_SPEED,
+  BOOST_SPEED,
+  BOSS_SCROLL_BONUS,
+  POOL_SIZES,
+  POWERUP,
+  INVULN,
+  DEPTHS,
+  POWERUP_META,
+  setLargeHudEnabled,
+} from '../config.js';
+import {
+  createHud,
+  updateHud as refreshHud,
+  showBanner as renderBanner,
+  applyHudScale,
+  refreshMuteUi as refreshMuteUiSystem,
+  announce,
+  announceProgress,
+} from '../systems/hud.js';
+import {
+  pickEnemyType as pickWeightedType,
+  spawnEnemy as spawnEnemySystem,
+  maybeDropPowerup as dropPowerupSystem,
+  clearPowerupLabel,
+  syncPowerupLabels,
+  cleanupOffscreen,
+} from '../systems/spawning.js';
+import {
+  startBoss as startBossSystem,
+  bossShoot as bossShootSystem,
+  updateBossBar as refreshBossBar,
+  killBoss as killBossSystem,
+  updateBossMovement,
+} from '../systems/boss.js';
 
-const W = 480;
-const H = 640;
-const PLAYER_SPEED = 320;
-const FIRE_DELAY = 180;
-const POWER_DOUBLE_MS = 10000;
-const POWER_SHIELD_MS = 9000;
+// Dimensions / speeds sourced from src/config.js (issue #11 extraction).
+// Local aliases keep the touch/perf call-sites below unchanged.
+const W = GAME_W;
+const H = GAME_H;
+const POWER_DOUBLE_MS = POWERUP.doubleDurationMs;
+const POWER_SHIELD_MS = POWERUP.shieldDurationMs;
 
+/**
+ * Main arcade scroller scene: player, enemies, power-ups, levels, boss, HUD.
+ *
+ * Orchestration layer: combat/spawn/boss/HUD details live in
+ * `src/config.js` + `src/systems/{spawning,hud,boss}.js`. Method names are
+ * kept stable so concurrent waves still apply; bodies delegate to systems
+ * where noted. Keeps main's touch (#1), auto-pause (#2), persistence (#4),
+ * audio (#5), pause overlay (#6), perf flags (#8), and analytics (#10).
+ *
+ * @extends Phaser.Scene
+ */
 export default class Game extends Phaser.Scene {
   constructor() {
     super('Game');
   }
 
+  /** Reset run state. */
   init() {
     this.score = 0;
     this.highScore = 0;
@@ -39,8 +93,10 @@ export default class Game extends Phaser.Scene {
     this.bossFireTimer = null;
     this.colliders = [];
     this.touch = null; // touch controls (issue #1), attached in create()
+    this.largeHud = false; // larger-HUD a11y option (issue #11, H key)
   }
 
+  /** Build world, groups, input, HUD, timers, and auto-pause wiring. */
   create() {
     this.attempt = (Game.attempts = (Game.attempts || 0) + 1);
     if (this.attempt > 1) track('retry', { attempt: this.attempt });
@@ -65,13 +121,13 @@ export default class Game extends Phaser.Scene {
     // --- Player ---
     this.player = this.physics.add.sprite(W / 2, H - 100, 'player');
     this.player.setCollideWorldBounds(true);
-    this.player.setDepth(10);
+    this.player.setDepth(DEPTHS.player);
 
     // Shield ring (hidden unless shield active)
     this.shieldRing = this.add.circle(0, 0, 30);
     this.shieldRing.setStrokeStyle(3, 0x35e0ff, 0.9);
     this.shieldRing.setVisible(false);
-    this.shieldRing.setDepth(11);
+    this.shieldRing.setDepth(DEPTHS.shieldRing);
 
     // Engine flame particles
     this.flame = this.add.particles(0, 0, 'spark', {
@@ -85,19 +141,19 @@ export default class Game extends Phaser.Scene {
       follow: this.player,
       followOffset: { x: 0, y: 20 }
     });
-    this.flame.setDepth(9);
+    this.flame.setDepth(DEPTHS.flame);
 
-    // --- Groups (pooled) ---
+    // --- Groups (pooled; caps from src/config.js) ---
     this.playerBullets = this.physics.add.group({
       defaultKey: 'bullet',
-      maxSize: 60
+      maxSize: POOL_SIZES.playerBullets
     });
     this.enemyBullets = this.physics.add.group({
       defaultKey: 'enemyBullet',
-      maxSize: 80
+      maxSize: POOL_SIZES.enemyBullets
     });
-    this.enemies = this.physics.add.group({ maxSize: 30 });
-    this.powerups = this.physics.add.group({ maxSize: 10 });
+    this.enemies = this.physics.add.group({ maxSize: POOL_SIZES.enemies });
+    this.powerups = this.physics.add.group({ maxSize: POOL_SIZES.powerups });
 
     // Explosion particles (one emitter, explode on demand)
     this.boom = this.add.particles(0, 0, 'spark', {
@@ -107,7 +163,7 @@ export default class Game extends Phaser.Scene {
       tint: [0xffffff, 0xffe14d, 0xff6b2e, 0xff2222],
       emitting: false
     });
-    this.boom.setDepth(20);
+    this.boom.setDepth(DEPTHS.explosion);
 
     // --- Collisions (stored for shutdown cleanup) ---
     this.colliders.push(
@@ -149,12 +205,13 @@ export default class Game extends Phaser.Scene {
 
     // --- Input (guarded: keyboard plugin may be absent) ---
     // Keep main's guard + auto-pause/mute wiring; add issue-6 ESC pause
-    // and paused-M = Menu (mute suppressed while paused).
+    // and paused-M = Menu (mute suppressed while paused); issue-11 adds H.
     if (this.input.keyboard) {
       this.cursors = this.input.keyboard.createCursorKeys();
-      this.keys = this.input.keyboard.addKeys('W,A,S,D,P,M,SPACE');
+      this.keys = this.input.keyboard.addKeys('W,A,S,D,P,M,H,SPACE');
       this.input.keyboard.on('keydown-P', () => this.togglePause());
       this.input.keyboard.on('keydown-ESC', () => this.togglePause());
+      this.input.keyboard.on('keydown-H', () => this.toggleLargeHud());
       this.input.keyboard.on('keydown-M', () => {
         if (this.isPaused) return; // paused M = Menu (overlay handler below)
         this.toggleMuteUi();
@@ -166,105 +223,17 @@ export default class Game extends Phaser.Scene {
     // --- Touch controls (issue #1, P0): drag-to-move + autofire + buttons ---
     this.touch = attachTouchControls(this);
 
-    // --- HUD ---
-    this.scoreText = this.add
-      .text(10, 8, 'SCORE 0', {
-        fontFamily: 'Courier New',
-        fontSize: '18px',
-        color: '#ffffff'
-      })
-      .setDepth(30);
-    this.highScoreText = this.add
-      .text(10, 30, 'HI 0', {
-        fontFamily: 'Courier New',
-        fontSize: '13px',
-        color: '#ffe14d'
-      })
-      .setDepth(30);
-    this.levelText = this.add
-      .text(W / 2, 8, LEVELS[0].name, {
-        fontFamily: 'Courier New',
-        fontSize: '18px',
-        color: '#8fd0ff'
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(30);
-    this.livesText = this.add
-      .text(W - 10, 8, '♥♥♥', {
-        fontFamily: 'Courier New',
-        fontSize: '18px',
-        color: '#ff6b81'
-      })
-      .setOrigin(1, 0)
-      .setDepth(30);
-    this.progressText = this.add
-      .text(W / 2, 32, '', {
-        fontFamily: 'Courier New',
-        fontSize: '13px',
-        color: '#dff0ff'
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(30);
-    this.bannerText = this.add
-      .text(W / 2, H / 2 - 40, '', {
-        fontFamily: 'Courier New',
-        fontSize: '36px',
-        color: '#ffe14d',
-        fontStyle: 'bold'
-      })
-      .setOrigin(0.5)
-      .setDepth(40)
-      .setAlpha(0);
-    this.pauseText = this.add
-      .text(W / 2, H / 2, 'PAUSED\nPress P to resume', {
-        fontFamily: 'Courier New',
-        fontSize: '28px',
-        color: '#ffffff',
-        align: 'center'
-      })
-      .setOrigin(0.5)
-      .setDepth(50)
-      .setVisible(false);
-    this.muteText = this.add
-      .text(W - 10, H - 24, Sfx.isMuted() ? 'MUTED (M)' : '', {
-        fontFamily: 'Courier New',
-        fontSize: '12px',
-        color: '#8fa3c7'
-      })
-      .setOrigin(1, 0)
-      .setDepth(30)
-      .setInteractive({ useHandCursor: true });
+    // --- HUD (extracted to src/systems/hud.js; same layout as main) ---
+    createHud(this);
     this.muteText.on('pointerdown', () => this.toggleMuteUi());
     this.refreshMuteUi();
-
-    // Boss HP bar
-    this.bossBarBg = this.add.rectangle(W / 2, 56, 400, 14, 0x330a12).setDepth(30).setVisible(false);
-    this.bossBar = this.add.rectangle(W / 2 - 196, 56, 392, 8, 0xff3355).setDepth(31).setOrigin(0, 0.5).setVisible(false);
-    this.bossLabel = this.add
-      .text(W / 2, 66, '', { fontFamily: 'Courier New', fontSize: '12px', color: '#ff8fa0' })
-      .setOrigin(0.5, 0)
-      .setDepth(30)
-      .setVisible(false);
-
-    // --- Power-up timers HUD (top-left, below score; hidden when inactive) ---
-    this.doubleLabel = this.add
-      .text(10, 82, '', { fontFamily: 'Courier New', fontSize: '12px', color: '#ffe14d' })
-      .setDepth(30)
-      .setVisible(false);
-    this.doubleBarBg = this.add.rectangle(10, 98, 112, 8, 0x222233, 0.9).setOrigin(0, 0.5).setDepth(30).setVisible(false);
-    this.doubleBar = this.add.rectangle(11, 98, 110, 5, 0xffe14d).setOrigin(0, 0.5).setDepth(31).setVisible(false);
-    this.shieldLabel = this.add
-      .text(10, 108, '', { fontFamily: 'Courier New', fontSize: '12px', color: '#35e0ff' })
-      .setDepth(30)
-      .setVisible(false);
-    this.shieldBarBg = this.add.rectangle(10, 124, 112, 8, 0x222233, 0.9).setOrigin(0, 0.5).setDepth(30).setVisible(false);
-    this.shieldBar = this.add.rectangle(11, 124, 110, 5, 0x35e0ff).setOrigin(0, 0.5).setDepth(31).setVisible(false);
 
     // --- Pause overlay (dim + resume/restart/menu buttons) ---
     this.createPauseOverlay();
 
     this.showBanner(LEVELS[0].name + '\nShoot everything!');
     this.updateHud();
+    announce(`Game start. ${LEVELS[0].name}. 3 lives. Score 0.`);
 
     // --- Enemy spawn loop ---
     this.spawnTimer = this.time.addEvent({
@@ -289,43 +258,25 @@ export default class Game extends Phaser.Scene {
     this.events.once('shutdown', this.handleShutdown, this);
   }
 
-  // ---------- helpers ----------
+  // ---------- helpers (HUD delegates to src/systems/hud.js) ----------
 
+  /**
+   * Show a center banner and mirror it to the screen-reader live region.
+   * @param {string} msg Banner text.
+   */
   showBanner(msg) {
-    this.bannerText.setText(msg);
-    this.tweens.killTweensOf(this.bannerText);
-    // ISSUE-8: skip banner tween under reduced-motion (plain show/hide only).
-    if (REDUCED_MOTION) {
-      this.bannerText.setAlpha(1).setScale(1);
-      this.time.delayedCall(2200, () => this.bannerText.setAlpha(0));
-      return;
-    }
-    this.bannerText.setAlpha(1).setScale(0.7);
-    this.tweens.add({
-      targets: this.bannerText,
-      alpha: 0,
-      scale: 1.15,
-      duration: 2200,
-      ease: 'Cubic.easeOut'
-    });
+    renderBanner(this, msg);
   }
 
+  /** Refresh score/hi/lives/level/progress/power-up HUD. */
   updateHud() {
-    this.scoreText.setText('SCORE ' + this.score);
-    if (this.highScoreText) {
-      this.highScoreText.setText('HI ' + Math.max(this.highScore || 0, this.score));
-    }
-    this.livesText.setText('♥'.repeat(Math.max(0, this.lives)) || '—');
-    this.levelText.setText(LEVELS[this.levelIndex].name);
-    if (this.bossActive) {
-      this.progressText.setText('DESTROY THE BOSS!');
-    } else {
-      const target = LEVELS[this.levelIndex].killsToClear;
-      this.progressText.setText(`KILLS ${this.kills}/${target}`);
-    }
-    if (this.doubleLabel) this.updatePowerupHud(this.elapsed);
+    refreshHud(this);
   }
 
+  /**
+   * Toggle pause (optionally forced).
+   * @param {boolean} [force] Force paused/unpaused when boolean.
+   */
   togglePause(force) {
     if (this.gameOver) return;
     const next = typeof force === 'boolean' ? force : !this.isPaused;
@@ -333,6 +284,10 @@ export default class Game extends Phaser.Scene {
     this.setPaused(next);
   }
 
+  /**
+   * Apply paused state: overlay, physics, timers + live announcement.
+   * @param {boolean} paused Next paused state.
+   */
   setPaused(paused) {
     if (this.gameOver) return;
     if (this.isPaused === paused && this.pauseOverlay && this.pauseOverlay.visible === paused) return;
@@ -346,11 +301,24 @@ export default class Game extends Phaser.Scene {
       this.physics.world.pause();
       if (this.spawnTimer) this.spawnTimer.paused = true;
       if (this.bossFireTimer) this.bossFireTimer.paused = true;
+      announce('Paused. Press P to resume.');
     } else {
       this.physics.world.resume();
       if (this.spawnTimer) this.spawnTimer.paused = false;
       if (this.bossFireTimer) this.bossFireTimer.paused = false;
+      announce('Resumed.');
     }
+  }
+
+  /**
+   * Toggle the larger-HUD accessibility option (H key, persisted).
+   */
+  toggleLargeHud() {
+    this.largeHud = !this.largeHud;
+    setLargeHudEnabled(this.largeHud);
+    applyHudScale(this);
+    this.updateHud();
+    announce(this.largeHud ? 'Large HUD on.' : 'Large HUD off.');
   }
 
   createPauseOverlay() {
@@ -476,8 +444,7 @@ export default class Game extends Phaser.Scene {
   }
 
   refreshMuteUi() {
-    if (!this.muteText) return;
-    this.muteText.setText(Sfx.isMuted() ? '🔇 MUTED (M)' : '🔊 SOUND (M)');
+    refreshMuteUiSystem(this);
   }
 
   handleShutdown() {
@@ -497,6 +464,7 @@ export default class Game extends Phaser.Scene {
       this.input.keyboard.off('keydown-ESC');
       this.input.keyboard.off('keydown-M');
       this.input.keyboard.off('keydown-R');
+      this.input.keyboard.off('keydown-H');
     }
     if (this.spawnTimer) {
       this.spawnTimer.remove(false);
@@ -516,36 +484,28 @@ export default class Game extends Phaser.Scene {
     this._visibilityHandler = null;
   }
 
+  /**
+   * Weighted random enemy type for the current level.
+   * @returns {'scout'|'weaver'|'tank'}
+   */
   pickEnemyType() {
-    const w = LEVELS[this.levelIndex].weights;
-    const r = Math.random();
-    if (r < w.scout) return 'scout';
-    if (r < w.scout + w.weaver) return 'weaver';
-    return 'tank';
+    return pickWeightedType(LEVELS[this.levelIndex].weights);
   }
 
+  /**
+   * Spawn one pooled enemy (delegates to src/systems/spawning.js).
+   * @returns {Phaser.GameObjects.GameObject|null}
+   */
   spawnEnemy() {
-    if (this.isPaused || this.gameOver || this.bossActive) return;
-    const type = this.pickEnemyType();
-    const stats = ENEMY_STATS[type];
-    const level = LEVELS[this.levelIndex];
-    const x = Phaser.Math.Between(30, W - 30);
-    const enemy = this.enemies.get(x, -40, stats.key);
-    if (!enemy) return;
-    // Re-enable physics body on pooled reuse (disableBody turns it off).
-    enemy.enableBody(true, x, -40, true, true);
-    enemy.setTexture(stats.key);
-    enemy.setData('type', type);
-    enemy.setData('hp', stats.hp);
-    enemy.setData('t', Math.random() * 10);
-    enemy.setData('baseX', x);
-    enemy.setData('lastShot', 0);
-    enemy.setVelocity(0, level.enemySpeed * stats.vy + 30);
-    enemy.setDepth(5);
-    enemy.clearTint();
-    this.updateHud();
+    const enemy = spawnEnemySystem(this);
+    if (enemy) this.updateHud();
+    return enemy;
   }
 
+  /**
+   * Fire player bullet(s) respecting FIRE_DELAY; double-shot fires a pair.
+   * @param {number} time Scene elapsed ms (this.elapsed clock).
+   */
   firePlayer(time) {
     if (time - this.lastFired < FIRE_DELAY) return;
     this.lastFired = time;
@@ -555,8 +515,8 @@ export default class Game extends Phaser.Scene {
       if (!b) return;
       b.enableBody(true, this.player.x + dx, this.player.y - 24, true, true);
       b.setTexture(double ? 'bullet2' : 'bullet');
-      b.setVelocity(0, -520);
-      b.setDepth(8);
+      b.setVelocity(0, PLAYER_BULLET_SPEED);
+      b.setDepth(DEPTHS.playerBullet);
     };
     if (double) {
       mkBullet(-10);
@@ -567,12 +527,23 @@ export default class Game extends Phaser.Scene {
     Sfx.laser();
   }
 
+  /**
+   * Explosion burst + sound.
+   * @param {number} x World x.
+   * @param {number} y World y.
+   * @param {boolean} [big=false] Larger burst + bigger sound.
+   */
   explode(x, y, big = false) {
     this.boom.explode(big ? 40 : 16, x, y);
     if (big) Sfx.bigExplosion();
     else Sfx.explosion();
   }
 
+  /**
+   * Damage an enemy, flash it white, and handle kill rewards.
+   * @param {Phaser.GameObjects.Sprite} enemy Enemy sprite.
+   * @param {number} dmg Damage dealt.
+   */
   damageEnemy(enemy, dmg) {
     const hp = (enemy.getData('hp') || 1) - dmg;
     enemy.setData('hp', hp);
@@ -594,32 +565,31 @@ export default class Game extends Phaser.Scene {
     }
   }
 
+  /**
+   * Roll for a power-up drop with text+icon label.
+   * @param {number} x Drop x.
+   * @param {number} y Drop y.
+   * @returns {'double'|'shield'|null}
+   */
   maybeDropPowerup(x, y) {
-    if (Math.random() > 0.12) return;
-    const kind = Math.random() < 0.55 ? 'double' : 'shield';
-    const p = this.powerups.get(x, y, kind === 'double' ? 'powerDouble' : 'powerShield');
-    if (!p) return;
-    p.enableBody(true, x, y, true, true);
-    p.setTexture(kind === 'double' ? 'powerDouble' : 'powerShield');
-    p.setData('kind', kind);
-    p.setVelocity(0, 130);
-    p.setDepth(6);
+    return dropPowerupSystem(this, x, y);
   }
 
+  /** Damage the player unless invulnerable/shielded; handles death. */
   hurtPlayer() {
     const now = this.elapsed;
     if (now < this.invulnUntil || this.gameOver) return;
     if (now < this.shieldUntil) {
       // Shield absorbs the hit.
       this.shieldUntil = 0;
-      this.invulnUntil = now + 1000;
+      this.invulnUntil = now + INVULN.afterShieldMs;
       Sfx.hit();
-      this.showBanner('SHIELD DOWN!');
+      this.showBanner(`${POWERUP_META.shield.icon} SHIELD DOWN!`);
       this.updateHud();
       return;
     }
     this.lives -= 1;
-    this.invulnUntil = now + 1500;
+    this.invulnUntil = now + INVULN.afterHitMs;
     Sfx.hit();
     // ISSUE-8: no shake/flash under reduced-motion.
     if (!REDUCED_MOTION) {
@@ -628,11 +598,13 @@ export default class Game extends Phaser.Scene {
     }
     this.explode(this.player.x, this.player.y, false);
     this.updateHud();
+    announce(`Hit. ${this.lives <= 0 ? 'No lives left.' : `Lives left ${this.lives}.`}`);
     if (this.lives <= 0) {
       this.doGameOver();
     }
   }
 
+  /** Advance level or trigger the boss when the kill target is met. */
   checkLevelProgress() {
     const level = LEVELS[this.levelIndex];
     if (this.bossActive) return;
@@ -652,9 +624,11 @@ export default class Game extends Phaser.Scene {
         this.startBoss();
       }
       this.updateHud();
+      announceProgress(this);
     }
   }
 
+  /** Re-tint background and reset the spawn timer for the new level. */
   applyLevelConfig() {
     const level = LEVELS[this.levelIndex];
     this.bg.setTint(level.tint);
@@ -667,74 +641,19 @@ export default class Game extends Phaser.Scene {
     });
   }
 
+  /** Spawn the boss + HP bar + overlaps (delegates to src/systems/boss.js). */
   startBoss() {
-    this.bossActive = true;
-    this.enemies.clear(true, true);
-    Sfx.bossWarn();
-    this.showBanner('WARNING\nBOSS INCOMING');
-    this.bossHp = BOSS.hp;
-    const boss = this.physics.add.sprite(W / 2, -80, 'boss');
-    boss.setDepth(5);
-    boss.setScale(1.4);
-    this.boss = boss;
-    // ISSUE-8: skip entrance tween under reduced-motion (place directly).
-    if (REDUCED_MOTION) {
-      boss.y = 130;
-    } else {
-      this.tweens.add({
-        targets: boss,
-        y: 130,
-        duration: 2000,
-        ease: 'Sine.easeOut'
-      });
-    }
-    this.bossBarBg.setVisible(true);
-    this.bossBar.setVisible(true);
-    this.bossLabel.setText('BOSS').setVisible(true);
-    this.bossFireTimer = this.time.addEvent({
-      delay: BOSS.fireDelay,
-      loop: true,
-      callback: () => this.bossShoot()
-    });
-    // Collide player bullets with the boss body directly.
-    this.colliders.push(
-      this.physics.add.overlap(this.playerBullets, boss, (b) => {
-        if (!b.active || this.gameOver) return;
-        b.disableBody(true, true);
-        b.setActive(false).setVisible(false);
-        this.bossHp -= 1;
-        this.score += 10;
-        boss.setTintFill(0xffffff);
-        this.time.delayedCall(50, () => boss.clearTint());
-        this.updateBossBar();
-        this.updateHud();
-        if (this.bossHp <= 0) this.killBoss();
-      })
-    );
-    // Ramming the boss hurts the player.
-    this.colliders.push(
-      this.physics.add.overlap(this.player, boss, () => this.hurtPlayer())
-    );
+    startBossSystem(this);
   }
 
+  /** Refresh boss HP bar scale. */
   updateBossBar() {
-    const frac = Math.max(0.0001, this.bossHp / BOSS.hp);
-    this.bossBar.setScale(frac, 1);
+    refreshBossBar(this);
   }
 
+  /** Fire one boss fan volley. */
   bossShoot() {
-    if (!this.bossActive || !this.boss || !this.boss.active || this.isPaused || this.gameOver) return;
-    const bx = this.boss.x;
-    const by = this.boss.y + 40;
-    for (let i = 0; i < BOSS.spreadCount; i++) {
-      const b = this.enemyBullets.get(bx, by, 'enemyBullet');
-      if (!b) continue;
-      b.enableBody(true, bx, by, true, true);
-      const spread = (i - (BOSS.spreadCount - 1) / 2) * 70;
-      b.setVelocity(spread, 240);
-      b.setDepth(7);
-    }
-    Sfx.enemyShoot();
+    bossShootSystem(this);
   }
 
   commitHighScore() {
@@ -749,31 +668,17 @@ export default class Game extends Phaser.Scene {
     this.updateHud();
   }
 
+  /** Kill the boss and queue the Win scene. */
   killBoss() {
-    this.score += BOSS.score;
-    this.commitHighScore();
-    track('boss_kill', { score: this.score });
-    this.explode(this.boss.x, this.boss.y, true);
-    // ISSUE-8: no shake under reduced-motion (keep #2 timer nulling).
-    if (!REDUCED_MOTION) this.cameras.main.shake(400, 0.02);
-    if (this.bossFireTimer) {
-      this.bossFireTimer.remove();
-      this.bossFireTimer = null;
-    }
-    if (this.boss) this.boss.destroy();
-    this.boss = null;
-    this.bossActive = false;
-    Sfx.win();
-    this.time.delayedCall(1200, () => {
-      this.scene.start('Win', { score: this.score });
-    });
-    this.gameOver = true; // freeze further damage/spawns during death cinematic
+    killBossSystem(this);
   }
 
+  /** Player death cinematic then GameOver scene. */
   doGameOver() {
     this.gameOver = true;
     this.commitHighScore();
     track('game_over', { score: this.score, level: this.levelIndex + 1 });
+    announce(`Game over. Final score ${this.score}.`);
     this.explode(this.player.x, this.player.y, true);
     this.player.setVisible(false);
     this.flame.stop();
@@ -786,6 +691,11 @@ export default class Game extends Phaser.Scene {
 
   // ---------- overlap handlers ----------
 
+  /**
+   * Player bullet vs enemy.
+   * @param {Phaser.GameObjects.Sprite} bullet Bullet sprite.
+   * @param {Phaser.GameObjects.Sprite} enemy Enemy sprite.
+   */
   onBulletHitsEnemy(bullet, enemy) {
     if (!bullet.active || !enemy.active || this.gameOver) return;
     bullet.disableBody(true, true);
@@ -793,6 +703,11 @@ export default class Game extends Phaser.Scene {
     this.damageEnemy(enemy, 1);
   }
 
+  /**
+   * Enemy bullet vs player.
+   * @param {Phaser.GameObjects.Sprite} player Player sprite.
+   * @param {Phaser.GameObjects.Sprite} bullet Bullet sprite.
+   */
   onEnemyBulletHitsPlayer(player, bullet) {
     if (!bullet.active || this.gameOver) return;
     bullet.disableBody(true, true);
@@ -800,6 +715,11 @@ export default class Game extends Phaser.Scene {
     this.hurtPlayer();
   }
 
+  /**
+   * Enemy ram vs player: both take a hit.
+   * @param {Phaser.GameObjects.Sprite} player Player sprite.
+   * @param {Phaser.GameObjects.Sprite} enemy Enemy sprite.
+   */
   onEnemyRamsPlayer(player, enemy) {
     if (!enemy.active || this.gameOver) return;
     this.explode(enemy.x, enemy.y, false);
@@ -808,27 +728,39 @@ export default class Game extends Phaser.Scene {
     this.hurtPlayer();
   }
 
+  /**
+   * Power-up pickup: grants double-shot or shield with text+icon banner.
+   * @param {Phaser.GameObjects.Sprite} player Player sprite.
+   * @param {Phaser.GameObjects.Sprite} power Power-up sprite.
+   */
   onCollectPowerup(player, power) {
     if (!power.active || this.gameOver) return;
     const kind = power.getData('kind');
+    clearPowerupLabel(power);
     power.disableBody(true, true);
     power.setActive(false).setVisible(false);
     Sfx.powerup();
     if (kind === 'double') {
-      this.doubleShotUntil = this.elapsed + POWER_DOUBLE_MS;
-      this.showBanner('DOUBLE SHOT!');
-      this.score += 50;
+      this.doubleShotUntil = this.elapsed + POWERUP.doubleDurationMs;
+      this.showBanner(`${POWERUP_META.double.icon} ${POWERUP_META.double.name}!`);
+      this.score += POWERUP.pickupScore;
     } else {
-      this.shieldUntil = this.elapsed + POWER_SHIELD_MS;
-      this.showBanner('SHIELD!');
-      this.score += 50;
+      this.shieldUntil = this.elapsed + POWERUP.shieldDurationMs;
+      this.showBanner(`${POWERUP_META.shield.icon} ${POWERUP_META.shield.name}!`);
+      this.score += POWERUP.pickupScore;
     }
     this.updateHud();
   }
 
   // ---------- main loop ----------
 
-  update(time, delta) {
+  /**
+   * Per-frame update: scroll, movement, shield blink, autofire, enemy
+   * patterns, offscreen cleanup, power-up labels, boss strafe.
+   * @param {number} _time Raw clock (unused; this.elapsed is authoritative).
+   * @param {number} delta Ms since last frame.
+   */
+  update(_time, delta) {
     if (this.isPaused) return;
     // ISSUE-8 (overlaps #2): clamp hitch/tab-return spikes to 50ms via shared
     // helper so tunneling is prevented without per-frame alloc.
@@ -850,8 +782,8 @@ export default class Game extends Phaser.Scene {
     // --- and speeds up while the player pushes UP/W. ---
     const hasKeyboard = !!(this.input && this.input.keyboard && this.cursors && this.keys);
     const upPressed = hasKeyboard && (this.cursors.up.isDown || this.keys.W.isDown);
-    const boost = upPressed ? 230 : 0;
-    const base = level.scrollSpeed + (this.bossActive ? 30 : 0);
+    const boost = upPressed ? BOOST_SPEED : 0;
+    const base = level.scrollSpeed + (this.bossActive ? BOSS_SCROLL_BONUS : 0);
     this.bg.tilePositionY -= (base + boost) * dt;
     this.clouds.tilePositionY -= (base * 1.6 + boost * 1.3) * dt;
 
@@ -904,10 +836,6 @@ export default class Game extends Phaser.Scene {
         const baseX = enemy.getData('baseX') || W / 2;
         enemy.x = Phaser.Math.Clamp(baseX + Math.sin(t * 3) * 110, 20, W - 20);
       }
-      if (enemy.y > H + 60) {
-        enemy.disableBody(true, false);
-        enemy.setActive(false).setVisible(false);
-      }
       // Tanks shoot downward.
       if (type === 'tank') {
         const last = enemy.getData('lastShot') || 0;
@@ -916,49 +844,20 @@ export default class Game extends Phaser.Scene {
           const b = this.enemyBullets.get(enemy.x, enemy.y + 20, 'enemyBullet');
           if (b) {
             b.enableBody(true, enemy.x, enemy.y + 20, true, true);
-            b.setVelocity(0, 260);
-            b.setDepth(7);
+            b.setVelocity(0, TANK_BULLET_SPEED);
+            b.setDepth(DEPTHS.enemyBullet);
             Sfx.enemyShoot();
           }
         }
       }
     }
 
-    // Cleanup offscreen bullets.
-    // ISSUE-8: indexed loops over cached arrays (no per-frame iterator alloc).
-    const pBullets = this.playerBullets.getChildren();
-    for (let i = 0; i < pBullets.length; i++) {
-      const b = pBullets[i];
-      if (b.active && b.y < -30) {
-        b.disableBody(true, true);
-        b.setActive(false).setVisible(false);
-      }
-    }
-    const eBullets = this.enemyBullets.getChildren();
-    for (let i = 0; i < eBullets.length; i++) {
-      const b = eBullets[i];
-      if (b.active && (b.y > H + 30 || b.x < -30 || b.x > W + 30)) {
-        b.disableBody(true, true);
-        b.setActive(false).setVisible(false);
-      }
-    }
-    const powers = this.powerups.getChildren();
-    for (let i = 0; i < powers.length; i++) {
-      const p = powers[i];
-      if (p.active && p.y > H + 30) {
-        p.disableBody(true, true);
-        p.setActive(false).setVisible(false);
-      }
-    }
+    // Pooled offscreen cleanup (bullets / power-ups + orphan labels / enemies).
+    cleanupOffscreen(this);
+    // Keep text+icon power-up labels glued to their sprites.
+    syncPowerupLabels(this);
 
     // --- Boss movement: sinusoidal strafe near the top ---
-    if (this.bossActive && this.boss && this.boss.active) {
-      this.boss.x = W / 2 + Math.sin(now / 700) * 150;
-      if (this.boss.y < 130 && this.boss.body) {
-        this.boss.setVelocityY(40);
-      } else if (this.boss.body) {
-        this.boss.setVelocity(0, 0);
-      }
-    }
+    updateBossMovement(this, now);
   }
 }

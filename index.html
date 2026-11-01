@@ -64,13 +64,26 @@
         <p class="subtitle">2D vertical-scrolling arcade shooter — dodge, shoot, beat the boss.</p>
       </header>
       <div id="game-wrap">
-        <div id="game">
+        <div
+          id="game"
+          role="application"
+          aria-label="Arcade plane shooter. Fly with arrow keys or WASD, shoot with Space, pause with P, toggle large HUD with H, mute with M. Touch: drag to move, auto-fire while touching."
+          tabindex="0"
+        >
           <div id="loading" role="status" aria-label="Game loading">
             <span class="spinner" aria-hidden="true"></span>
             <span>Loading game&hellip;</span>
           </div>
         </div>
         <p id="game-status" class="visually-hidden" aria-live="polite">Loading game&hellip;</p>
+        <!-- Issue #11 live region: Game HUD mirrors score/lives/boss events here. -->
+        <div
+          id="a11y-status"
+          class="visually-hidden"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        ></div>
         <div id="fallback" hidden>
           <p><strong>Could not start the game.</strong></p>
           <p>Your browser may not support WebGL/Canvas, or a script failed to load. Please try a
@@ -78,7 +91,7 @@
           <p class="fallback-detail" id="fallback-detail"></p>
         </div>
       </div>
-      <p class="hint">Arrows / WASD to fly &middot; Space to shoot &middot; P to pause &middot; Touch: drag to move, auto-fire while touching</p>
+      <p class="hint">Arrows / WASD to fly &middot; Space to shoot &middot; P to pause &middot; H for larger HUD &middot; M to mute &middot; Touch: drag to move, auto-fire while touching</p>
       <noscript>
         <p class="noscript-msg">Arcade Plane Shooter needs JavaScript to run. Please enable JavaScript and reload.</p>
       </noscript>
@@ -90,10 +103,13 @@
         var game = document.getElementById('game');
         var loading = document.getElementById('loading');
         var status = document.getElementById('game-status');
+        var a11y = document.getElementById('a11y-status');
         if (!game || !loading) return;
         function ready() {
           if (loading.parentNode) loading.parentNode.removeChild(loading);
-          if (status) status.textContent = 'Game loaded. Use arrow keys or WASD to fly, space to shoot.';
+          var msg = 'Game loaded. Use arrow keys or WASD to fly, space to shoot.';
+          if (status) status.textContent = msg;
+          if (a11y) a11y.textContent = msg;
         }
         if (game.querySelector('canvas')) {
           ready();
