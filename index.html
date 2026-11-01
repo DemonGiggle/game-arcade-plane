@@ -35,6 +35,27 @@
     <meta name="twitter:image" content="/icons/icon-512.png" />
 
     <link rel="stylesheet" href="/src/style.css" />
+    <style>
+      #fallback {
+        max-width: 420px;
+        padding: 16px 20px;
+        color: #ffd9d9;
+        background: #3a0714;
+        border: 1px solid #7f2a3a;
+        border-radius: 6px;
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      #fallback p {
+        margin: 0 0 8px 0;
+      }
+      #fallback .fallback-detail {
+        opacity: 0.85;
+        font-size: 12px;
+        word-break: break-word;
+      }
+    </style>
   </head>
   <body>
     <div id="app">
@@ -50,6 +71,12 @@
           </div>
         </div>
         <p id="game-status" class="visually-hidden" aria-live="polite">Loading game&hellip;</p>
+        <div id="fallback" hidden>
+          <p><strong>Could not start the game.</strong></p>
+          <p>Your browser may not support WebGL/Canvas, or a script failed to load. Please try a
+            modern browser with hardware acceleration enabled, then reload.</p>
+          <p class="fallback-detail" id="fallback-detail"></p>
+        </div>
       </div>
       <p class="hint">Arrows / WASD to fly &middot; Space to shoot &middot; P to pause</p>
       <noscript>

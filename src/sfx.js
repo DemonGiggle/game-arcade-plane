@@ -6,17 +6,38 @@ let master = null;
 let muted = false;
 
 function ensureCtx() {
-  if (ctx) {
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  try {
+    if (ctx) {
+      if (ctx.state === 'suspended') ctx.resume().catch(function () {});
+      return ctx;
+    }
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    var next = null;
+    try {
+      next = new AC();
+    } catch (e) {
+      return null;
+    }
+    ctx = next;
+    try {
+      master = ctx.createGain();
+      master.gain.value = 0.35;
+      master.connect(ctx.destination);
+    } catch (e2) {
+      try {
+        if (ctx.close) ctx.close().catch(function () {});
+      } catch (e3) {
+        // Ignore cleanup errors.
+      }
+      ctx = null;
+      master = null;
+      return null;
+    }
     return ctx;
+  } catch (e4) {
+    return null;
   }
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return null;
-  ctx = new AC();
-  master = ctx.createGain();
-  master.gain.value = 0.35;
-  master.connect(ctx.destination);
-  return ctx;
 }
 
 export function unlockAudio() {
