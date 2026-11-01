@@ -5,6 +5,10 @@ html, body {
   color: #cfe3ff;
   font-family: 'Courier New', monospace;
   height: 100%;
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #app {
@@ -24,6 +28,9 @@ html, body {
   border-radius: 6px;
   box-shadow: 0 0 24px rgba(58, 160, 255, 0.25);
   max-width: 96vw;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .hint {
