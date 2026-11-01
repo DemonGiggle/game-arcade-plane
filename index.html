@@ -4,13 +4,86 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Arcade Plane Shooter</title>
+    <meta
+      name="description"
+      content="Arcade Plane Shooter — a fast 2D vertical-scrolling plane shooter built with Phaser 3. Dodge enemies, grab power-ups, and beat the boss."
+    />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://github.com/DemonGiggle/game-arcade-plane" />
+    <meta name="theme-color" content="#071a3a" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Arcade Plane Shooter" />
+    <meta property="og:title" content="Arcade Plane Shooter" />
+    <meta
+      property="og:description"
+      content="Fast 2D vertical-scrolling plane shooter (Phaser 3). Dodge enemies, grab power-ups, beat the boss."
+    />
+    <meta property="og:url" content="https://github.com/DemonGiggle/game-arcade-plane" />
+    <meta property="og:image" content="/icons/icon-512.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Arcade Plane Shooter" />
+    <meta
+      name="twitter:description"
+      content="Fast 2D vertical-scrolling plane shooter (Phaser 3). Dodge enemies, grab power-ups, beat the boss."
+    />
+    <meta name="twitter:image" content="/icons/icon-512.png" />
+
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="app">
-      <div id="game"></div>
+      <header class="site-header">
+        <h1>Arcade Plane Shooter</h1>
+        <p class="subtitle">2D vertical-scrolling arcade shooter — dodge, shoot, beat the boss.</p>
+      </header>
+      <div id="game-wrap">
+        <div id="game">
+          <div id="loading" role="status" aria-label="Game loading">
+            <span class="spinner" aria-hidden="true"></span>
+            <span>Loading game&hellip;</span>
+          </div>
+        </div>
+        <p id="game-status" class="visually-hidden" aria-live="polite">Loading game&hellip;</p>
+      </div>
       <p class="hint">Arrows / WASD to fly &middot; Space to shoot &middot; P to pause</p>
+      <noscript>
+        <p class="noscript-msg">Arcade Plane Shooter needs JavaScript to run. Please enable JavaScript and reload.</p>
+      </noscript>
     </div>
     <script type="module" src="/src/main.js"></script>
+    <script>
+      // Splash / a11y helper only — no gameplay logic.
+      (function () {
+        var game = document.getElementById('game');
+        var loading = document.getElementById('loading');
+        var status = document.getElementById('game-status');
+        if (!game || !loading) return;
+        function ready() {
+          if (loading.parentNode) loading.parentNode.removeChild(loading);
+          if (status) status.textContent = 'Game loaded. Use arrow keys or WASD to fly, space to shoot.';
+        }
+        if (game.querySelector('canvas')) {
+          ready();
+          return;
+        }
+        var observer = new MutationObserver(function () {
+          if (game.querySelector('canvas')) {
+            ready();
+            observer.disconnect();
+          }
+        });
+        observer.observe(game, { childList: true });
+        // Fallback so the splash never traps content if canvas is delayed.
+        setTimeout(function () {
+          if (document.body.contains(loading) && game.querySelector('canvas')) ready();
+        }, 10000);
+      })();
+    </script>
   </body>
 </html>
