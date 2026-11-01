@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { Sfx } from '../sfx.js';
 import { track } from '../analytics.js';
 import { load, update as persistUpdate } from '../persistence.js';
+// ISSUE-8 (P1 perf/a11y): reduced-motion skips ambient tweens/scroll.
+import { REDUCED_MOTION, clampDeltaMs } from '../perf.js';
 
 export default class Menu extends Phaser.Scene {
   constructor() {
@@ -52,14 +54,17 @@ export default class Menu extends Phaser.Scene {
 
     const plane = this.physics.add.sprite(width / 2, 280, 'player');
     plane.setScale(2);
-    this.tweens.add({
-      targets: plane,
-      y: 300,
-      duration: 900,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut'
-    });
+    // ISSUE-8: no idle bob tween under reduced-motion.
+    if (!REDUCED_MOTION) {
+      this.tweens.add({
+        targets: plane,
+        y: 300,
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+    }
 
     const tutorial = seenTutorial
       ? 'Move: Arrows / WASD\nShoot: SPACE (hold)\nPause: P   Mute: M\n\nClear Level 1 + 2, then beat the BOSS.'
@@ -83,13 +88,16 @@ export default class Menu extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.tweens.add({
-      targets: this.children.getAt(this.children.length - 1),
-      alpha: 0.2,
-      duration: 600,
-      yoyo: true,
-      repeat: -1
-    });
+    // ISSUE-8: no prompt blink tween under reduced-motion.
+    if (!REDUCED_MOTION) {
+      this.tweens.add({
+        targets: this.children.getAt(this.children.length - 1),
+        alpha: 0.2,
+        duration: 600,
+        yoyo: true,
+        repeat: -1
+      });
+    }
 
     const start = () => {
       Sfx.unlock();
@@ -145,7 +153,9 @@ export default class Menu extends Phaser.Scene {
   }
 
   update(time, delta) {
-    const dt = delta / 1000;
+    // ISSUE-8: clamp delta; freeze ambient scroll under reduced-motion.
+    if (REDUCED_MOTION) return;
+    const dt = clampDeltaMs(delta) / 1000;
     this.bg.tilePositionY -= 90 * dt;
     this.clouds.tilePositionY -= 150 * dt;
   }
