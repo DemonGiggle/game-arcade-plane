@@ -27,6 +27,9 @@ export default class Game extends Phaser.Scene {
     this.invulnUntil = 0;
     this.lastFired = 0;
     this.elapsed = 0;
+    this.spawnTimer = null;
+    this.bossFireTimer = null;
+    this.colliders = [];
   }
 
   create() {
@@ -86,44 +89,54 @@ export default class Game extends Phaser.Scene {
     });
     this.boom.setDepth(20);
 
-    // --- Collisions ---
-    this.physics.add.overlap(
-      this.playerBullets,
-      this.enemies,
-      this.onBulletHitsEnemy,
-      null,
-      this
+    // --- Collisions (stored for shutdown cleanup) ---
+    this.colliders.push(
+      this.physics.add.overlap(
+        this.playerBullets,
+        this.enemies,
+        this.onBulletHitsEnemy,
+        null,
+        this
+      )
     );
-    this.physics.add.overlap(
-      this.enemyBullets,
-      this.player,
-      this.onEnemyBulletHitsPlayer,
-      null,
-      this
+    this.colliders.push(
+      this.physics.add.overlap(
+        this.enemyBullets,
+        this.player,
+        this.onEnemyBulletHitsPlayer,
+        null,
+        this
+      )
     );
-    this.physics.add.overlap(
-      this.enemies,
-      this.player,
-      this.onEnemyRamsPlayer,
-      null,
-      this
+    this.colliders.push(
+      this.physics.add.overlap(
+        this.enemies,
+        this.player,
+        this.onEnemyRamsPlayer,
+        null,
+        this
+      )
     );
-    this.physics.add.overlap(
-      this.powerups,
-      this.player,
-      this.onCollectPowerup,
-      null,
-      this
+    this.colliders.push(
+      this.physics.add.overlap(
+        this.powerups,
+        this.player,
+        this.onCollectPowerup,
+        null,
+        this
+      )
     );
 
-    // --- Input ---
-    this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,P,M,SPACE');
-    this.input.keyboard.on('keydown-P', () => this.togglePause());
-    this.input.keyboard.on('keydown-M', () => {
-      const m = Sfx.toggleMute();
-      this.muteText.setText(m ? 'MUTED (M)' : '');
-    });
+    // --- Input (guarded: keyboard plugin may be absent) ---
+    if (this.input.keyboard) {
+      this.cursors = this.input.keyboard.createCursorKeys();
+      this.keys = this.input.keyboard.addKeys('W,A,S,D,P,M,SPACE');
+      this.input.keyboard.on('keydown-P', () => this.togglePause());
+      this.input.keyboard.on('keydown-M', () => {
+        const m = Sfx.toggleMute();
+        this.muteText.setText(m ? 'MUTED (M)' : '');
+      });
+    }
 
     // --- HUD ---
     this.scoreText = this.add
@@ -204,6 +217,21 @@ export default class Game extends Phaser.Scene {
       loop: true,
       callback: () => this.spawnEnemy()
     });
+
+    // --- Auto-pause on blur/hidden (tab switch, minimize) ---
+    this._autoPauseHandler = () => this.autoPause();
+    this._visibilityHandler = () => {
+      if (typeof document !== 'undefined' && document.hidden) this.autoPause();
+    };
+    this.game.events.on('hidden', this._autoPauseHandler, this);
+    this.game.events.on('blur', this._autoPauseHandler, this);
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', this._visibilityHandler);
+    }
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('blur', this._autoPauseHandler);
+    }
+    this.events.once('shutdown', this.handleShutdown, this);
   }
 
   // ---------- helpers ----------
@@ -239,11 +267,50 @@ export default class Game extends Phaser.Scene {
     this.pauseText.setVisible(this.isPaused);
     if (this.isPaused) {
       this.physics.world.pause();
-      this.spawnTimer.paused = true;
+      if (this.spawnTimer) this.spawnTimer.paused = true;
+      if (this.bossFireTimer) this.bossFireTimer.paused = true;
     } else {
       this.physics.world.resume();
-      this.spawnTimer.paused = false;
+      if (this.spawnTimer) this.spawnTimer.paused = false;
+      if (this.bossFireTimer) this.bossFireTimer.paused = false;
     }
+  }
+
+  autoPause() {
+    if (!this.isPaused && !this.gameOver) this.togglePause();
+  }
+
+  handleShutdown() {
+    if (this.game && this.game.events) {
+      this.game.events.off('hidden', this._autoPauseHandler, this);
+      this.game.events.off('blur', this._autoPauseHandler, this);
+    }
+    if (typeof document !== 'undefined' && document.removeEventListener && this._visibilityHandler) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler);
+    }
+    if (typeof window !== 'undefined' && window.removeEventListener && this._autoPauseHandler) {
+      window.removeEventListener('blur', this._autoPauseHandler);
+    }
+    if (this.input && this.input.keyboard) {
+      this.input.keyboard.off('keydown-P');
+      this.input.keyboard.off('keydown-M');
+    }
+    if (this.spawnTimer) {
+      this.spawnTimer.remove(false);
+      this.spawnTimer = null;
+    }
+    if (this.bossFireTimer) {
+      this.bossFireTimer.remove(false);
+      this.bossFireTimer = null;
+    }
+    if (this.colliders && this.physics && this.physics.world) {
+      for (const collider of this.colliders) {
+        if (collider) this.physics.world.removeCollider(collider);
+      }
+      this.colliders = [];
+    }
+    this._autoPauseHandler = null;
+    this._visibilityHandler = null;
   }
 
   pickEnemyType() {
@@ -382,6 +449,7 @@ export default class Game extends Phaser.Scene {
   applyLevelConfig() {
     const level = LEVELS[this.levelIndex];
     this.bg.setTint(level.tint);
+    if (!this.spawnTimer) return;
     this.spawnTimer.delay = level.spawnDelay;
     this.spawnTimer.reset({
       delay: level.spawnDelay,
@@ -415,20 +483,24 @@ export default class Game extends Phaser.Scene {
       callback: () => this.bossShoot()
     });
     // Collide player bullets with the boss body directly.
-    this.physics.add.overlap(this.playerBullets, boss, (b) => {
-      if (!b.active || this.gameOver) return;
-      b.disableBody(true, true);
-      b.setActive(false).setVisible(false);
-      this.bossHp -= 1;
-      this.score += 10;
-      boss.setTintFill(0xffffff);
-      this.time.delayedCall(50, () => boss.clearTint());
-      this.updateBossBar();
-      this.updateHud();
-      if (this.bossHp <= 0) this.killBoss();
-    });
+    this.colliders.push(
+      this.physics.add.overlap(this.playerBullets, boss, (b) => {
+        if (!b.active || this.gameOver) return;
+        b.disableBody(true, true);
+        b.setActive(false).setVisible(false);
+        this.bossHp -= 1;
+        this.score += 10;
+        boss.setTintFill(0xffffff);
+        this.time.delayedCall(50, () => boss.clearTint());
+        this.updateBossBar();
+        this.updateHud();
+        if (this.bossHp <= 0) this.killBoss();
+      })
+    );
     // Ramming the boss hurts the player.
-    this.physics.add.overlap(this.player, boss, () => this.hurtPlayer());
+    this.colliders.push(
+      this.physics.add.overlap(this.player, boss, () => this.hurtPlayer())
+    );
   }
 
   updateBossBar() {
@@ -455,7 +527,10 @@ export default class Game extends Phaser.Scene {
     this.score += BOSS.score;
     this.explode(this.boss.x, this.boss.y, true);
     this.cameras.main.shake(400, 0.02);
-    if (this.bossFireTimer) this.bossFireTimer.remove();
+    if (this.bossFireTimer) {
+      this.bossFireTimer.remove();
+      this.bossFireTimer = null;
+    }
     if (this.boss) this.boss.destroy();
     this.boss = null;
     this.bossActive = false;
@@ -523,23 +598,25 @@ export default class Game extends Phaser.Scene {
 
   update(time, delta) {
     if (this.isPaused) return;
+    // Clamp delta to 50ms so tab-return spikes can't tunnel through colliders.
+    const clampedDelta = Math.min(delta, 50);
     if (this.gameOver) {
       // Death / win cinematic: keep the background drifting, freeze combat.
-      const dt0 = delta / 1000;
+      const dt0 = clampedDelta / 1000;
       this.bg.tilePositionY -= LEVELS[this.levelIndex].scrollSpeed * dt0;
       this.clouds.tilePositionY -= LEVELS[this.levelIndex].scrollSpeed * 1.6 * dt0;
       return;
     }
 
-    const dt = delta / 1000;
-    this.elapsed += delta;
+    const dt = clampedDelta / 1000;
+    this.elapsed += clampedDelta;
     const now = this.elapsed;
     const level = LEVELS[this.levelIndex];
 
     // --- Background scroll: always drifts (upward flight bias),
     // --- and speeds up while the player pushes UP/W. ---
-    const upPressed =
-      this.cursors.up.isDown || this.keys.W.isDown;
+    const hasKeyboard = !!(this.input && this.input.keyboard && this.cursors && this.keys);
+    const upPressed = hasKeyboard && (this.cursors.up.isDown || this.keys.W.isDown);
     const boost = upPressed ? 230 : 0;
     const base = level.scrollSpeed + (this.bossActive ? 30 : 0);
     this.bg.tilePositionY -= (base + boost) * dt;
@@ -548,10 +625,12 @@ export default class Game extends Phaser.Scene {
     // --- Player movement (keyboard only) ---
     let vx = 0;
     let vy = 0;
-    if (this.cursors.left.isDown || this.keys.A.isDown) vx -= 1;
-    if (this.cursors.right.isDown || this.keys.D.isDown) vx += 1;
-    if (this.cursors.up.isDown || this.keys.W.isDown) vy -= 1;
-    if (this.cursors.down.isDown || this.keys.S.isDown) vy += 1;
+    if (hasKeyboard) {
+      if (this.cursors.left.isDown || this.keys.A.isDown) vx -= 1;
+      if (this.cursors.right.isDown || this.keys.D.isDown) vx += 1;
+      if (this.cursors.up.isDown || this.keys.W.isDown) vy -= 1;
+      if (this.cursors.down.isDown || this.keys.S.isDown) vy += 1;
+    }
     this.player.setVelocity(vx * PLAYER_SPEED, vy * PLAYER_SPEED);
     // Bank/tilt when strafing.
     this.player.setAngle(Phaser.Math.Linear(this.player.angle, vx * 12, 0.25));
@@ -572,7 +651,7 @@ export default class Game extends Phaser.Scene {
     }
 
     // --- Shooting (Space, hold to autofire) ---
-    if (this.cursors.space.isDown || this.keys.SPACE.isDown) {
+    if (hasKeyboard && (this.cursors.space.isDown || this.keys.SPACE.isDown)) {
       this.firePlayer(now);
     }
 
