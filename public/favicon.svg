@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Arcade Plane Shooter icon">
+  <rect width="64" height="64" rx="12" fill="#071a3a"/>
+  <rect x="0" y="0" width="64" height="64" rx="12" fill="none" stroke="#2a4a7f" stroke-width="2"/>
+  <!-- simple jet silhouette -->
+  <path d="M32 8 L38 30 L52 36 L38 38 L36 52 L32 48 L28 52 L26 38 L12 36 L26 30 Z" fill="#3aa0ff"/>
+  <circle cx="32" cy="30" r="3" fill="#cfe3ff"/>
+  <rect x="30" y="38" width="4" height="8" fill="#cfe3ff"/>
+</svg>

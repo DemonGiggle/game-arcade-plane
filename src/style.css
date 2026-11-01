@@ -31,3 +31,79 @@ html, body {
   font-size: 13px;
   margin: 0;
 }
+
+.site-header {
+  text-align: center;
+}
+
+.site-header h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 1px;
+  color: #e8f3ff;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+#game-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#game {
+  position: relative;
+  max-width: 96vw;
+}
+
+#loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: min(480px, 96vw);
+  box-sizing: border-box;
+  padding: 24px 12px;
+  background: #071a3a;
+  color: #cfe3ff;
+  border: 2px solid #2a4a7f;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #2a4a7f;
+  border-top-color: #3aa0ff;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.noscript-msg {
+  color: #ffd9a0;
+  font-size: 13px;
+  text-align: center;
+}
